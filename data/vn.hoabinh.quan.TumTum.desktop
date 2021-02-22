@@ -1,0 +1,17 @@
+[Desktop Entry]
+Encoding=UTF-8
+
+Name=TumTum
+GenericName=QR code scanner
+GenericName[vi]=Máy quét mã QR
+X-GNOME-FullName=TumTum QR code scanner for GTK+ desktop
+X-GNOME-FullName[vi]=Chương trình quét mã QR cho desktop GTK+ TumTum
+Comment=Scan and decode QR from camera or static image
+Comment[vi]=Quét và giải mã QR từ camera hoặc ảnh tĩnh
+Keywords=qr;code;qr-code;qr-decoder;qr-scanner
+Exec=tumtum %u
+Terminal=false
+Type=Application
+Icon=vn.hoabinh.quan.TumTum
+StartupNotify=true
+Categories=GTK;Office;Graphics;AudioVideo;Video;Scanning;

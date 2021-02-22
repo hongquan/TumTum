@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright 2020 Nguyễn Hồng Quân <ng.hong.quan@gmail.com> -->
+<component type="desktop">
+  <id>vn.hoabinh.quan.TumTum</id>
+  <launchable type="desktop-id">vn.hoabinh.quan.TumTum.desktop</launchable>
+
+  <metadata_license>MIT</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>TumTum</name>
+  <summary>QR code scanner for Linux desktop</summary>
+  <description>
+    <p>A missing native QR Code scanner application for Linux desktop.</p>
+    <p>TumTum can scan from webcam or from static image.
+ To be part of Linux desktop modernization, it is set to support Wayland (not XWayland), and only implement native GUI (no web crap).</p>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://i.imgur.com/K3TU9bm.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://i.imgur.com/bIV57cV.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://i.imgur.com/ldynPU6.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://i.imgur.com/aORgQKj.png</image>
+    </screenshot>
+    <screenshot>
+      <image>https://i.imgur.com/MyH9CEC.png</image>
+    </screenshot>
+  </screenshots>
+  <url type="homepage">https://github.com/hongquan/TumTum</url>
+  <url type="bugtracker">https://github.com/hongquan/TumTum/issues</url>
+  <developer_name>Nguyễn Hồng Quân</developer_name>
+  <update_contact>ng.hong.quan_AT_gmail.com</update_contact>
+  <kudos>
+    <kudo>ModernToolkit</kudo>
+    <kudo>Notifications</kudo>
+  </kudos>
+
+  <releases>
+    <release version="0.6.0" date="2020-10-26" urgency="medium">
+      <description>
+        <p>Compatible with GStreamer v1.18.</p>
+      </description>
+    </release>
+    <release version="0.5.6" date="2020-06-27" urgency="medium">
+      <description>
+        <p>Fix handling HTTP file in some unusual case.</p>
+      </description>
+    </release>
+    <release version="0.5.5" date="2020-06-24" urgency="medium">
+      <description>
+        <p>Fix AppStream data.</p>
+      </description>
+    </release>
+    <release version="0.5.4" date="2020-06-24" urgency="medium">
+      <description>
+        <p>Move Play &amp; Pause buttons to overlay.</p>
+      </description>
+    </release>
+    <release version="0.5.3" date="2020-06-23" urgency="medium">
+      <description>
+        <p>Fix missing files when building Flatpak.</p>
+      </description>
+    </release>
+    <release version="0.5.2" date="2020-06-22" urgency="medium">
+      <description>
+        <p>Able to build Flatpak (sucessfully add NetworkManager dependency).</p>
+      </description>
+    </release>
+    <release version="0.5.1" date="2020-06-20" urgency="medium">
+      <description>
+        <p>Fix crash when detecting WiFi content from webcam.</p>
+        <p>Fix: Forgot to check SVG in some cases.</p>
+      </description>
+    </release>
+    <release version="0.5.0" date="2020-06-19" urgency="medium">
+      <description>
+        <p>Display result URL with a link.</p>
+        <p>Display result WiFi info and let save it to NetworkManager.</p>
+        <p>Support scanning from SVG file.</p>
+        <p>Change license to GPL-v3.</p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2020-06-07" urgency="medium">
+      <description>
+        <p>Release on FlatHub.</p>
+        <p>Test and verify to work on X11-based DEs like KDE, Xfce, LxQt.</p>
+      </description>
+    </release>
+    <release version="0.3.2" date="2020-06-07" urgency="medium">
+      <description>
+        <p>Fix to work on non-OpenGL environment.</p>
+        <p>Support PipeWire.</p>
+      </description>
+    </release>
+    <release version="0.3.0" date="2020-06-04" urgency="medium">
+      <description>
+        <p>Let drag, drop and paste image</p>
+      </description>
+    </release>
+    <release version="0.2.0" date="2020-06-01" urgency="medium">
+      <description>
+        <p>Drop Cheese dependency</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1" />
+</component>

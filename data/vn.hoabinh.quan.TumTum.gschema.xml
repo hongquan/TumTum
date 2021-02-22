@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="tumtum">
+	<schema id="vn.hoabinh.quan.TumTum" path="/vn/hoabinh/quan/TumTum/">
+	</schema>
+</schemalist>
