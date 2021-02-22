@@ -310,6 +310,7 @@ class TumTumApplication(Gtk.Application):
             draw_data = user_data.get_nowait()
         except Empty:
             return
+        user_data.task_done()
         logger.debug('To draw {}', draw_data)
         context.rectangle(*draw_data.face_box)
         context.set_source_rgba(0.9, 0, 0, 0.6)
@@ -317,7 +318,7 @@ class TumTumApplication(Gtk.Application):
         context.stroke()
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
-        if appsink.is_eos():
+        if appsink.is_eos() or self.overlay_queue.full():
             return Gst.FlowReturn.OK
         sample: Gst.Sample = appsink.try_pull_sample(0.5)
         buffer: Gst.Buffer = sample.get_buffer()
