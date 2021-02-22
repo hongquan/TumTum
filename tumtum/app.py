@@ -74,19 +74,15 @@ class TumTumApplication(Gtk.Application):
     main_grid: Optional[Gtk.Grid] = None
     area_webcam: Optional[Gtk.Widget] = None
     cont_webcam: Optional[Gtk.Overlay] = None
-    stack_img_source: Optional[Gtk.Stack] = None
     btn_play: Optional[Gtk.RadioToolButton] = None
     # We connect Play button with "toggled" signal, but when we want to imitate mouse click on the button,
     # calling "set_active" on it doesn't work! We have to call on the Pause button instead
     btn_pause: Optional[Gtk.RadioToolButton] = None
-    btn_img_chooser: Optional[Gtk.FileChooserButton] = None
     gst_pipeline: Optional[Gst.Pipeline] = None
     raw_result_buffer: Optional[Gtk.TextBuffer] = None
     webcam_combobox: Optional[Gtk.ComboBox] = None
     webcam_store: Optional[Gtk.ListStore] = None
-    frame_image: Optional[Gtk.AspectFrame] = None
     # Box holds the emplement to display when no image is chosen
-    box_image_empty: Optional[Gtk.Box] = None
     devmonitor: Optional[Gst.DeviceMonitor] = None
     clipboard: Optional[Gtk.Clipboard] = None
     result_display: Optional[Gtk.Frame] = None
@@ -168,10 +164,8 @@ class TumTumApplication(Gtk.Application):
         builder.get_object('main-grid')
         window.set_application(self)
         self.set_accels_for_action('app.quit', ("<Ctrl>Q",))
-        self.stack_img_source = builder.get_object('stack-img-source')
         self.btn_play = builder.get_object('btn-play')
         self.btn_pause = builder.get_object('btn-pause')
-        self.btn_img_chooser = builder.get_object('btn-img-chooser')
         self.cont_webcam = builder.get_object('cont-webcam')
         if self.gst_pipeline:
             self.replace_webcam_placeholder_with_gstreamer_sink()
@@ -179,12 +173,8 @@ class TumTumApplication(Gtk.Application):
         self.raw_result_expander = builder.get_object('raw-result-expander')
         self.webcam_store = builder.get_object('webcam-list')
         self.webcam_combobox = builder.get_object('webcam-combobox')
-        self.frame_image = builder.get_object('frame-image')
-        self.box_image_empty = builder.get_object('box-image-empty')
         main_menubutton: Gtk.MenuButton = builder.get_object('main-menubutton')
         main_menubutton.set_menu_model(ui.build_app_menu_model())
-        self.frame_image.drag_dest_set(Gtk.DestDefaults.ALL, [], Gdk.DragAction.COPY)
-        self.frame_image.drag_dest_add_uri_targets()
         self.clipboard = Gtk.Clipboard.get_for_display(Gdk.Display.get_default(),
                                                        Gdk.SELECTION_CLIPBOARD)
         self.result_display = builder.get_object('result-display-frame')
