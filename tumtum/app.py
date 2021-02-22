@@ -14,39 +14,39 @@
 
 
 import os
-import io
 from gettext import gettext as _
 from urllib.parse import urlsplit
 from urllib.parse import SplitResult as UrlSplitResult
 from typing import Optional, Tuple, Dict
+from queue import Queue, Empty
+from dataclasses import dataclass
 
 import gi
 import zbar
 import logbook
+import cairo
 import numpy as np
 import face_recognition
 from logbook import Logger
 from PIL import Image
 
-gi.require_version('GObject', '2.0')
 gi.require_version('GLib', '2.0')
 gi.require_version('Gtk', '3.0')
 gi.require_version('Gdk', '3.0')
 gi.require_version('Gio', '2.0')
-gi.require_version('GdkPixbuf', '2.0')
-gi.require_version('Rsvg', '2.0')
 gi.require_version('Gst', '1.0')
 gi.require_version('GstBase', '1.0')
 gi.require_version('GstApp', '1.0')
 gi.require_version('NM', '1.0')
+gi.require_foreign('cairo')
 
-from gi.repository import GObject, GLib, Gtk, Gdk, Gio, GdkPixbuf, Rsvg, Gst, GstApp, NM
+from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp, NM
 
 from .consts import APP_ID, SHORT_NAME
 from . import __version__
 from . import ui
-from .resources import get_ui_filepath, guess_content_type, cache_http_file
-from .prep import get_device_path, choose_first_image, export_svg, scale_pixbuf
+from .resources import get_ui_filepath
+from .prep import get_device_path
 from .messages import WifiInfoMessage, parse_wifi_message
 
 
@@ -62,12 +62,19 @@ CONTROL_MASK = Gdk.ModifierType.CONTROL_MASK
 #   gst-launch-1.0 v4l2src ! videoconvert ! glsinkbin sink=gtkglsink
 
 
+@dataclass
+class OverlayDrawData:
+    face_box: Optional[cairo.Rectangle] = None
+    nose_box: Optional[cairo.Rectangle] = None
+
+
 class TumTumApplication(Gtk.Application):
     SINK_NAME = 'sink'
     APPSINK_NAME = 'app_sink'
     STACK_CHILD_NAME_WEBCAM = 'src_webcam'
     STACK_CHILD_NAME_IMAGE = 'src_image'
     GST_SOURCE_NAME = 'webcam_source'
+    GST_OVERLAY_NAME = 'overlay_cairo'
     SIGNAL_QRCODE_DETECTED = 'qrcode-detected'
     window: Optional[Gtk.Window] = None
     main_grid: Optional[Gtk.Grid] = None
@@ -95,6 +102,7 @@ class TumTumApplication(Gtk.Application):
     raw_result_expander: Optional[Gtk.Expander] = None
     nm_client: Optional[NM.Client] = None
     g_event_sources: Dict[str, int] = {}
+    overlay_queue: 'Queue[OverlayDrawData]' = Queue(1)
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -125,7 +133,8 @@ class TumTumApplication(Gtk.Application):
         # https://gstreamer.freedesktop.org/documentation/application-development/advanced/pipeline-manipulation.html?gi-language=c#grabbing-data-with-appsink
         # Try GL backend first
         command = (f'v4l2src name={self.GST_SOURCE_NAME} ! tee name=t ! '
-                   f'queue ! glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
+                   f'queue ! videoconvert ! cairooverlay name={self.GST_OVERLAY_NAME} ! '
+                   f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
                    't. ! queue leaky=2 max-size-buffers=2 ! videoconvert ! video/x-raw,format=RGB !'
                    f'appsink name={self.APPSINK_NAME} max_buffers=2 drop=1')
         logger.debug('To build pipeline: {}', command)
@@ -138,7 +147,7 @@ class TumTumApplication(Gtk.Application):
             logger.info('OpenGL is not available, fallback to normal GtkSink')
             # Fallback to non-GL
             command = (f'v4l2src name={self.GST_SOURCE_NAME} ! videoconvert ! tee name=t ! '
-                       f'queue ! gtksink name={self.SINK_NAME} '
+                       f'queue ! cairooverlay name={self.GST_OVERLAY_NAME} ! gtksink name={self.SINK_NAME} '
                        't. ! queue leaky=1 max-size-buffers=2 ! video/x-raw,format=RGB ! '
                        f'appsink name={self.APPSINK_NAME}')
             logger.debug('To build pipeline: {}', command)
@@ -152,6 +161,10 @@ class TumTumApplication(Gtk.Application):
         appsink: GstApp.AppSink = pipeline.get_by_name(self.APPSINK_NAME)
         logger.debug('Appsink: {}', appsink)
         appsink.connect('new-sample', self.on_new_webcam_sample)
+        # Ref: https://gist.github.com/pmgration/273383a6e02e961b0af06e05fbf4349f
+        gst_overlay = pipeline.get_by_name(self.GST_OVERLAY_NAME)
+        logger.debug('Overlay: {}', gst_overlay)
+        gst_overlay.connect('draw', self.on_overlay_draw, self.overlay_queue)
         self.gst_pipeline = pipeline
         return pipeline
 
@@ -189,17 +202,12 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam.add_overlay(box_playpause)
         logger.debug('Connect signal handlers')
         builder.connect_signals(handlers)
-        self.frame_image.connect('drag-data-received', self.on_frame_image_drag_data_received)
         return window
 
     def signal_handlers_for_glade(self):
         return {
             'on_btn_play_toggled': self.play_webcam_video,
             'on_webcam_combobox_changed': self.on_webcam_combobox_changed,
-            'on_stack_img_source_visible_child_notify': self.on_stack_img_source_visible_child_notify,
-            'on_btn_img_chooser_update_preview': self.on_btn_img_chooser_update_preview,
-            'on_btn_img_chooser_file_set': self.on_btn_img_chooser_file_set,
-            'on_eventbox_key_press_event': self.on_eventbox_key_press_event,
             'on_evbox_playpause_enter_notify_event': self.on_evbox_playpause_enter_notify_event,
             'on_evbox_playpause_leave_notify_event': self.on_evbox_playpause_leave_notify_event,
             'on_info_bar_response': self.on_info_bar_response,
@@ -253,50 +261,6 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam.remove(old_area)
         self.cont_webcam.add(area)
         area.show()
-
-    def grab_focus_on_event_box(self):
-        event_box: Gtk.EventBox = self.frame_image.get_child()
-        event_box.grab_focus()
-
-    def insert_image_to_placeholder(self, pixbuf: GdkPixbuf.Pixbuf):
-        stack = self.stack_img_source
-        pane: Gtk.AspectFrame = stack.get_visible_child()
-        logger.debug('Visible pane: {}', pane.get_name())
-        if not isinstance(pane, Gtk.AspectFrame):
-            logger.error('Stack seems to be in wrong state')
-            return
-        try:
-            event_box: Gtk.EventBox = pane.get_child()
-            child = event_box.get_child()
-            logger.debug('Child: {}', child)
-        except IndexError:
-            logger.error('{} doesnot have child or grandchild!', pane)
-            return
-        if isinstance(child, Gtk.Image):
-            child.set_from_pixbuf(pixbuf)
-            return
-        image = Gtk.Image.new_from_pixbuf(pixbuf)
-        # Detach the box
-        logger.debug('Detach {} from {}', child, event_box)
-        event_box.remove(child)
-        logger.debug('Attach {}', image)
-        event_box.add(image)
-        image.show()
-
-    def reset_image_placeholder(self):
-        stack = self.stack_img_source
-        logger.debug('Children: {}', stack.get_children())
-        pane: Gtk.AspectFrame = stack.get_child_by_name(self.STACK_CHILD_NAME_IMAGE)
-        try:
-            event_box: Gtk.EventBox = pane.get_child()
-            old_widget = event_box.get_child()
-        except IndexError:
-            logger.error('Stack seems to be in wrong state')
-            return
-        if old_widget == self.box_image_empty:
-            return
-        event_box.remove(old_widget)
-        event_box.add(self.box_image_empty)
 
     def display_url(self, url: UrlSplitResult):
         logger.debug('Found URL: {}', url)
@@ -399,187 +363,17 @@ class TumTumApplication(Gtk.Application):
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
         app_sink.set_emit_signals(True)
 
-    def on_stack_img_source_visible_child_notify(self, stack: Gtk.Stack, param: GObject.ParamSpec):
-        self.reset_result()
-        self.btn_img_chooser.unselect_all()
-        child = stack.get_visible_child()
-        child_name = child.get_name()
-        logger.debug('Visible child: {} ({})', child, child_name)
-        toolbar = self.btn_play.get_parent()
-        if not child_name.endswith('webcam'):
-            logger.info('To disable webcam')
-            if self.gst_pipeline:
-                self.gst_pipeline.set_state(Gst.State.NULL)
-            toolbar.hide()
-            self.webcam_combobox.hide()
-            self.btn_img_chooser.show()
-            self.grab_focus_on_event_box()
-        elif self.gst_pipeline:
-            logger.info('To enable webcam')
-            ppl_source = self.gst_pipeline.get_by_name(self.GST_SOURCE_NAME)
-            if ppl_source.get_property('device'):
-                self.btn_pause.set_active(False)
-                self.gst_pipeline.set_state(Gst.State.PLAYING)
-            self.btn_img_chooser.hide()
-            self.webcam_combobox.show()
-            self.reset_image_placeholder()
-            toolbar.show()
-
-    def on_btn_img_chooser_update_preview(self, chooser: Gtk.FileChooserButton):
-        file_uri: Optional[str] = chooser.get_preview_uri()
-        logger.debug('Chose file: {}', file_uri)
-        if not file_uri:
-            chooser.set_preview_widget_active(False)
-            return
-        gfile = Gio.file_new_for_uri(file_uri)
-        ftype: Gio.FileType = gfile.query_file_type(Gio.FileQueryInfoFlags.NONE, None)
-        if ftype != Gio.FileType.REGULAR:
-            chooser.set_preview_widget_active(False)
-            return
-        stream: Gio.FileInputStream = gfile.read(None)
-        pix = GdkPixbuf.Pixbuf.new_from_stream_at_scale(stream, 200, 400, True, None)
-        preview = chooser.get_preview_widget()
-        logger.debug('Preview: {}', preview)
-        preview.set_from_pixbuf(pix)
-        chooser.set_preview_widget_active(True)
-        return
-
-    def process_passed_image_file(self, chosen_file: Gio.File, content_type: Optional[str] = None):
-        self.reset_result()
-        # The file can be remote, so we should read asynchronously
-        chosen_file.read_async(GLib.PRIORITY_DEFAULT, None, self.cb_file_read, content_type)
-        # If this file is remote, reading it will take time, so we display progress bar.
-        if not chosen_file.is_native():
-            self.progress_bar.set_visible(True)
-            sid = GLib.timeout_add(100, ui.update_progress, self.progress_bar)
-            # Properly handle GLib event source
-            if self.g_event_sources.get('update_progress'):
-                GLib.Source.remove(self.g_event_sources['update_progress'])
-            self.g_event_sources['update_progress'] = sid
-
-    def cb_networkmanager_client_init_done(self, client: NM.Client, res: Gio.AsyncResult):
-        if not client:
-            logger.error('Failed to initialize NetworkManager client')
-            return
-        client.new_finish(res)
-        self.nm_client = client
-        logger.debug('NM client: {}', client)
-
-    def cb_file_read(self, remote_file: Gio.File, res: Gio.AsyncResult, content_type: Optional[str] = None):
-        w, h = self.get_preview_size()
-        gi_stream: Gio.FileInputStream = remote_file.read_finish(res)
-        scaled_pix = GdkPixbuf.Pixbuf.new_from_stream_at_scale(gi_stream, w, h, True, None)
-        # Prevent freezing GUI
-        Gtk.main_iteration()
-        self.insert_image_to_placeholder(scaled_pix)
-        # Prevent freezing GUI
-        Gtk.main_iteration()
-        gi_stream.seek(0, GLib.SeekType.SET, None)
-        logger.debug('Content type: {}', content_type)
-        if content_type == 'image/svg+xml':
-            svg: Rsvg.Handle = Rsvg.Handle.new_from_stream_sync(gi_stream, remote_file,
-                                                                Rsvg.HandleFlags.FLAGS_NONE, None)
-            stream: io.BytesIO = export_svg(svg)
-        else:
-            stream = io.BytesIO()
-            CHUNNK_SIZE = 8192
-            # There is no method like read_all_bytes(), so have to do verbose way below
-            while True:
-                buf: GLib.Bytes = gi_stream.read_bytes(CHUNNK_SIZE, None)
-                amount = buf.get_size()
-                logger.debug('Read {} bytes', amount)
-                stream.write(buf.get_data())
-                if amount <= 0:
-                    break
-        if self.g_event_sources.get('update_progress'):
-            GLib.Source.remove(self.g_event_sources['update_progress'])
-            del self.g_event_sources['update_progress']
-        ui.update_progress(self.progress_bar, 1)
-        self.process_passed_rgb_image(stream)
-
-    def process_passed_rgb_image(self, stream: io.BytesIO):
-        pim = Image.open(stream)
-        grayscale = pim.convert('L')
-        w, h = grayscale.size
-        img = zbar.Image(w, h, 'Y800', grayscale.tobytes())
-        n = self.zbar_scanner.scan(img)
-        logger.debug('Any QR code?: {}', n)
-        if not n:
-            return
-        self.display_result(img.symbols)
-
-    def on_btn_img_chooser_file_set(self, chooser: Gtk.FileChooserButton):
-        uri: str = chooser.get_uri()
-        logger.debug('Chose file: {}', uri)
-        # There is a limitation of Gio when handling HTTP remote files,
-        # like sometimes it can not read the same file twice (server doesn't handle Range header).
-        # So, for HTTP file, we can support Gio by caching to temporary local file.
-        if uri.startswith(('http://', 'https://')):
-            # Prevent freezing GUI
-            Gtk.main_iteration()
-            chosen_file = cache_http_file(uri)
-        else:
-            chosen_file: Gio.File = Gio.file_new_for_uri(uri)
-        # Check file content type
+    def on_overlay_draw(self, _overlay: GstBase.BaseTransform, context: cairo.Context,
+                        _timestamp: int, _duration: int, user_data: 'Queue[OverlayDrawData]'):
         try:
-            content_type = guess_content_type(chosen_file)
-        except GLib.Error as e:
-            logger.error('Failed to open file. Error {}', e)
-            self.show_error('Failed to open file.')
+            draw_data = user_data.get_nowait()
+        except Empty:
             return
-        logger.debug('Content type: {}', content_type)
-        if not content_type.startswith('image/'):
-            self.show_error(_('Unsuported file type %s!') % content_type)
-            return
-        self.process_passed_image_file(chosen_file, content_type)
-        self.grab_focus_on_event_box()
-
-    def on_frame_image_drag_data_received(self, widget: Gtk.AspectFrame, drag_context: Gdk.DragContext,
-                                          x: int, y: int, data: Gtk.SelectionData, info: int, time: int):
-        uri: str = data.get_data().strip().decode()
-        logger.debug('Dropped URI: {}', uri)
-        if not uri:
-            logger.debug('Something wrong with desktop environment. No URI is given.')
-            return
-        chosen_file = Gio.file_new_for_uri(uri)
-        self.btn_img_chooser.select_uri(uri)
-        content_type = guess_content_type(chosen_file)
-        logger.debug('Content type: {}', content_type)
-        self.process_passed_image_file(chosen_file, content_type)
-        self.grab_focus_on_event_box()
-
-    def on_eventbox_key_press_event(self, widget: Gtk.Widget, event: Gdk.Event):
-        logger.debug('Got key press: {}, state {}', event, event.state)
-        key_name = Gdk.keyval_name(event.keyval)
-        if (event.state & CONTROL_MASK) != CONTROL_MASK or key_name != 'v':
-            logger.debug('Ignore key "{}"', key_name)
-            return
-        # Pressed Ctrl + V
-        self.reset_result()
-        logger.debug('Clipboard -> {}', self.clipboard.wait_for_targets())
-        pixbuf: Optional[GdkPixbuf.Pixbuf] = self.clipboard.wait_for_image()
-        logger.debug('Got pasted image: {}', pixbuf)
-        if pixbuf:
-            w, h = self.get_preview_size()
-            scaled_pixbuf = scale_pixbuf(pixbuf, w, h)
-            self.insert_image_to_placeholder(scaled_pixbuf)
-            success, content = pixbuf.save_to_bufferv('png', [], [])
-            if not success:
-                return
-            stream = io.BytesIO(content)
-            self.process_passed_rgb_image(stream)
-            return
-        uris = self.clipboard.wait_for_uris()
-        logger.debug('URIs: {}', uris)
-        if not uris:
-            return
-        # Get first URI which looks like a URL of an image
-        gfile = choose_first_image(uris)
-        if not gfile:
-            return
-        self.btn_img_chooser.select_uri(gfile.get_uri())
-        content_type = guess_content_type(gfile)
-        self.process_passed_image_file(gfile, content_type)
+        logger.debug('To draw {}', draw_data)
+        context.rectangle(*draw_data.face_box)
+        context.set_source_rgba(0.9, 0, 0, 0.6)
+        context.set_line_width(4)
+        context.stroke()
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
         if appsink.is_eos():
@@ -604,9 +398,11 @@ class TumTumApplication(Gtk.Application):
         results = face_recognition.face_locations(nimp)
         logger.debug('Result: {}', results)
         if results:
-            self.btn_pause.set_active(True)
-            landmarks = face_recognition.face_landmarks(nimp)
-            logger.info('Landmarks: {}', landmarks)
+            # face_recognition return result as (top, right, bottom, left)
+            t, r, b, le = results[0]
+            rect = cairo.Rectangle(le, t, r - le, b - t)
+            draw_data = OverlayDrawData(face_box=rect)
+            self.overlay_queue.put_nowait(draw_data)
         return Gst.FlowReturn.OK
 
     def on_evbox_playpause_enter_notify_event(self, box: Gtk.EventBox, event: Gdk.EventCrossing):
