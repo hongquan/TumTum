@@ -108,7 +108,6 @@ class TumTumApplication(Gtk.Application):
     def do_startup(self):
         Gtk.Application.do_startup(self)
         self.setup_actions()
-        self.build_gstreamer_pipeline()
         devmonitor = Gst.DeviceMonitor.new()
         devmonitor.add_filter('Video/Source', Gst.Caps.from_string('video/x-raw'))
         logger.debug('Monitor: {}', devmonitor)
@@ -222,6 +221,7 @@ class TumTumApplication(Gtk.Application):
 
     def do_activate(self):
         if not self.window:
+            self.build_gstreamer_pipeline()
             self.window = self.build_main_window()
             self.zbar_scanner = zbar.ImageScanner()
             self.discover_webcam()
