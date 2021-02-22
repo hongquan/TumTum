@@ -15,14 +15,11 @@
 
 import os
 from gettext import gettext as _
-from urllib.parse import urlsplit
-from urllib.parse import SplitResult as UrlSplitResult
-from typing import Optional, Tuple, Dict
+from typing import Optional, Dict
 from queue import Queue, Empty
 from dataclasses import dataclass
 
 import gi
-import zbar
 import logbook
 import cairo
 import numpy as np
@@ -37,17 +34,15 @@ gi.require_version('Gio', '2.0')
 gi.require_version('Gst', '1.0')
 gi.require_version('GstBase', '1.0')
 gi.require_version('GstApp', '1.0')
-gi.require_version('NM', '1.0')
 gi.require_foreign('cairo')
 
-from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp, NM
+from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp
 
 from .consts import APP_ID, SHORT_NAME
 from . import __version__
 from . import ui
 from .resources import get_ui_filepath
 from .prep import get_device_path
-from .messages import WifiInfoMessage, parse_wifi_message
 
 
 logger = Logger(__name__)
@@ -75,7 +70,6 @@ class TumTumApplication(Gtk.Application):
     STACK_CHILD_NAME_IMAGE = 'src_image'
     GST_SOURCE_NAME = 'webcam_source'
     GST_OVERLAY_NAME = 'overlay_cairo'
-    SIGNAL_QRCODE_DETECTED = 'qrcode-detected'
     window: Optional[Gtk.Window] = None
     main_grid: Optional[Gtk.Grid] = None
     area_webcam: Optional[Gtk.Widget] = None
@@ -87,7 +81,6 @@ class TumTumApplication(Gtk.Application):
     btn_pause: Optional[Gtk.RadioToolButton] = None
     btn_img_chooser: Optional[Gtk.FileChooserButton] = None
     gst_pipeline: Optional[Gst.Pipeline] = None
-    zbar_scanner: Optional[zbar.ImageScanner] = None
     raw_result_buffer: Optional[Gtk.TextBuffer] = None
     webcam_combobox: Optional[Gtk.ComboBox] = None
     webcam_store: Optional[Gtk.ListStore] = None
@@ -100,7 +93,6 @@ class TumTumApplication(Gtk.Application):
     progress_bar: Optional[Gtk.ProgressBar] = None
     infobar: Optional[Gtk.InfoBar] = None
     raw_result_expander: Optional[Gtk.Expander] = None
-    nm_client: Optional[NM.Client] = None
     g_event_sources: Dict[str, int] = {}
     overlay_queue: 'Queue[OverlayDrawData]' = Queue(1)
 
@@ -231,7 +223,6 @@ class TumTumApplication(Gtk.Application):
         if not self.window:
             self.build_gstreamer_pipeline()
             self.window = self.build_main_window()
-            self.zbar_scanner = zbar.ImageScanner()
             self.discover_webcam()
         self.window.present()
         logger.debug("Window {} is shown", self.window)
@@ -262,52 +253,12 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam.add(area)
         area.show()
 
-    def display_url(self, url: UrlSplitResult):
-        logger.debug('Found URL: {}', url)
-        box = ui.build_url_display(url)
-        self.result_display.add(box)
-        self.result_display.show_all()
-
-    def display_wifi(self, wifi: WifiInfoMessage):
-        box = ui.build_wifi_info_display(wifi, self.nm_client)
-        self.result_display.add(box)
-        self.result_display.show_all()
-
     def reset_result(self):
         self.raw_result_buffer.set_text('')
         self.raw_result_expander.set_expanded(False)
         child = self.result_display.get_child()
         if child:
             self.result_display.remove(child)
-
-    def display_result(self, symbols: zbar.SymbolSet):
-        # There can be more than one QR code in the image. We just pick the first.
-        # No need to to handle StopIteration exception, because this function is called
-        # only when QR code is detected from the image.
-        sym: zbar.Symbol = next(iter(symbols))
-        logger.info('QR type: {}', sym.type)
-        raw_data: str = sym.data
-        logger.info('Decoded string: {}', raw_data)
-        logger.debug('Set text for raw_result_buffer')
-        self.raw_result_buffer.set_text(raw_data)
-        # Is it a URL?
-        try:
-            url = urlsplit(raw_data)
-        except ValueError:
-            url = None
-        if url and url.scheme and url.netloc:
-            self.display_url(url)
-            return
-        try:
-            wifi = parse_wifi_message(raw_data)
-            logger.debug('To display {}', wifi)
-            self.display_wifi(wifi)
-            return
-        except ValueError:
-            logger.debug('Not a wellknown message')
-            pass
-        # Unknown message, just show raw content
-        self.raw_result_expander.set_expanded(True)
 
     def on_device_monitor_message(self, bus: Gst.Bus, message: Gst.Message, user_data):
         logger.debug('Message: {}', message)
@@ -435,13 +386,6 @@ class TumTumApplication(Gtk.Application):
             self.reset_result()
             # Delay set_emit_signals call to prevent scanning old frame
             GLib.timeout_add_seconds(1, app_sink.set_emit_signals, True)
-
-    def get_preview_size(self) -> Tuple[int, int]:
-        widget = self.stack_img_source.get_visible_child()
-        size: Gdk.Rectangle
-        b: int
-        size, b = widget.get_allocated_size()
-        return (size.width, size.height)
 
     def show_about_dialog(self, action: Gio.SimpleAction, param: Optional[GLib.Variant] = None):
         if self.gst_pipeline:
