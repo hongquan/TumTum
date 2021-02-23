@@ -14,10 +14,11 @@
 
 
 import os
+from uuid import UUID, uuid4
 from gettext import gettext as _
-from typing import Optional, Dict
+from typing import Optional, Dict, Tuple
 from queue import Queue, Empty
-from dataclasses import dataclass
+from urllib.parse import urljoin
 
 import gi
 import logbook
@@ -26,6 +27,8 @@ import numpy as np
 import face_recognition
 from logbook import Logger
 from PIL import Image
+from pydantic import BaseModel, Field
+from pydantic.dataclasses import dataclass
 
 gi.require_version('GLib', '2.0')
 gi.require_version('Gtk', '3.0')
@@ -34,11 +37,12 @@ gi.require_version('Gio', '2.0')
 gi.require_version('Gst', '1.0')
 gi.require_version('GstBase', '1.0')
 gi.require_version('GstApp', '1.0')
+gi.require_version('Soup', '2.4')
 gi.require_foreign('cairo')
 
-from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp
+from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp, Soup
 
-from .consts import APP_ID, SHORT_NAME
+from .consts import APP_ID, SHORT_NAME, BACKEND_BASE_URL
 from . import __version__
 from . import ui
 from .resources import get_ui_filepath
@@ -61,6 +65,43 @@ CONTROL_MASK = Gdk.ModifierType.CONTROL_MASK
 class OverlayDrawData:
     face_box: Optional[cairo.Rectangle] = None
     nose_box: Optional[cairo.Rectangle] = None
+
+
+def to_camel(string: str) -> str:
+    parts = string.split('_')
+    parts[1:] = [w.capitalize() for w in parts[1:]]
+    return ''.join(parts)
+
+
+class ChallengeStartRequest(BaseModel):
+    user_id: UUID = Field(default_factory=uuid4)
+    image_width: int
+    image_height: int
+
+    class Config:
+        alias_generator = to_camel
+        allow_population_by_field_name = True
+
+
+class ChallengeInfo(BaseModel):
+    id: UUID
+    user_id: UUID
+    image_width: int
+    image_height: int
+    area_left: int
+    area_top: int
+    area_width: int
+    area_height: int
+    min_face_area_percent: int
+    nose_left: int
+    nose_top: int
+    nose_width: int
+    nose_height: int
+    token: str
+
+    class Config:
+        alias_generator = to_camel
+        allow_population_by_field_name = True
 
 
 class TumTumApplication(Gtk.Application):
@@ -90,6 +131,7 @@ class TumTumApplication(Gtk.Application):
     infobar: Optional[Gtk.InfoBar] = None
     raw_result_expander: Optional[Gtk.Expander] = None
     g_event_sources: Dict[str, int] = {}
+    frame_size: Optional[Tuple[int, int]] = None
     overlay_queue: 'Queue[OverlayDrawData]' = Queue(1)
 
     def __init__(self, *args, **kwargs):
@@ -152,6 +194,7 @@ class TumTumApplication(Gtk.Application):
         # Ref: https://gist.github.com/pmgration/273383a6e02e961b0af06e05fbf4349f
         gst_overlay = pipeline.get_by_name(self.GST_OVERLAY_NAME)
         logger.debug('Overlay: {}', gst_overlay)
+        gst_overlay.connect('caps-changed', self.on_overlay_caps_changed)
         gst_overlay.connect('draw', self.on_overlay_draw, self.overlay_queue)
         self.gst_pipeline = pipeline
         return pipeline
@@ -208,6 +251,23 @@ class TumTumApplication(Gtk.Application):
             self.webcam_store.append((cam_path, cam_name))
         logger.debug('Start device monitoring')
         self.devmonitor.start()
+
+    def get_challenge(self):
+        url_start = urljoin(BACKEND_BASE_URL, 'start')
+        w, h = self.frame_size
+        params = ChallengeStartRequest(image_width=w, image_height=h)
+        session = Soup.Session.new()
+        message = Soup.Message.new('POST', url_start)
+        body = params.json(by_alias=True).encode()
+        logger.debug('To get challenge data from {}, with {}', url_start, body)
+        message.set_request('application/json', Soup.MemoryUse.COPY, body)
+        session.queue_message(message, self.cb_challenge_retrieved)
+
+    def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
+        raw_body = msg.get_property('response-body-data').get_data()
+        logger.debug('Response: {}', raw_body)
+        challenge_info = ChallengeInfo.parse_raw(raw_body)
+        logger.debug('Challenge info: {}', challenge_info)
 
     def do_activate(self):
         if not self.window:
@@ -303,6 +363,14 @@ class TumTumApplication(Gtk.Application):
         self.gst_pipeline.set_state(Gst.State.PLAYING)
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
         app_sink.set_emit_signals(True)
+
+    def on_overlay_caps_changed(self, _overlay: GstBase.BaseTransform, caps: Gst.Caps):
+        struct: Gst.Structure = caps[0]
+        width = struct['width']
+        height = struct['height']
+        self.frame_size = (width, height)
+        logger.debug('Frame size: {}', self.frame_size)
+        self.get_challenge()
 
     def on_overlay_draw(self, _overlay: GstBase.BaseTransform, context: cairo.Context,
                         _timestamp: int, _duration: int, user_data: 'Queue[OverlayDrawData]'):
