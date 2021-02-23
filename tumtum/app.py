@@ -133,6 +133,7 @@ class TumTumApplication(Gtk.Application):
     g_event_sources: Dict[str, int] = {}
     frame_size: Optional[Tuple[int, int]] = None
     overlay_queue: 'Queue[OverlayDrawData]' = Queue(1)
+    challenge_info: Optional[ChallengeInfo] = None
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -262,12 +263,13 @@ class TumTumApplication(Gtk.Application):
         logger.debug('To get challenge data from {}, with {}', url_start, body)
         message.set_request('application/json', Soup.MemoryUse.COPY, body)
         session.queue_message(message, self.cb_challenge_retrieved)
+        self.show_guide('Put your face into center of box')
 
     def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
         logger.debug('Response: {}', raw_body)
-        challenge_info = ChallengeInfo.parse_raw(raw_body)
-        logger.debug('Challenge info: {}', challenge_info)
+        self.challenge_info = ChallengeInfo.parse_raw(raw_body)
+        logger.debug('Challenge info: {}', self.challenge_info)
 
     def do_activate(self):
         if not self.window:
@@ -374,16 +376,39 @@ class TumTumApplication(Gtk.Application):
 
     def on_overlay_draw(self, _overlay: GstBase.BaseTransform, context: cairo.Context,
                         _timestamp: int, _duration: int, user_data: 'Queue[OverlayDrawData]'):
-        try:
-            draw_data = user_data.get_nowait()
-        except Empty:
+        if not self.challenge_info:
             return
-        user_data.task_done()
-        logger.debug('To draw {}', draw_data)
-        context.rectangle(*draw_data.face_box)
-        context.set_source_rgba(0.9, 0, 0, 0.6)
+        w = self.challenge_info.area_width
+        h = self.challenge_info.area_height
+        x = self.challenge_info.area_top
+        y = self.challenge_info.area_top
+        logger.debug('To draw area where face is expected: {}', (x, y, w, h))
+        context.rectangle(x, y, w, h)
+        color = (0.9, 0, 0, 0.6)
+        try:
+            found_face = user_data.get_nowait()
+            user_data.task_done()
+            fx, fy, fw, fh = found_face.face_box
+            face_inside = (fx >= x and fy >= y and fw <= w and fh <= h)
+        except Empty:
+            face_inside = False
+        if face_inside:
+            color = (0, 0.9, 0, 0.6)
+        context.set_source_rgba(*color)
         context.set_line_width(4)
         context.stroke()
+        if face_inside:
+            w = self.challenge_info.nose_width
+            h = self.challenge_info.nose_height
+            x = self.challenge_info.nose_top
+            y = self.challenge_info.nose_top
+            logger.debug('To draw area where nose is expected: {}', (x, y, w, h))
+            context.rectangle(x, y, w, h)
+            color = (0.8, 0.8, 0, 0.6)
+            context.set_source_rgba(*color)
+            context.set_line_width(4)
+            context.stroke()
+            self.show_guide('Put your nose to the yellow box')
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
         if appsink.is_eos() or self.overlay_queue.full():
@@ -455,6 +480,13 @@ class TumTumApplication(Gtk.Application):
         dlg_about.set_version(__version__)
         logger.debug('To present {}', dlg_about)
         dlg_about.present()
+
+    def show_guide(self, message: str):
+        box: Gtk.Box = self.infobar.get_content_area()
+        label: Gtk.Label = box.get_children()[0]
+        label.set_label(message)
+        self.infobar.set_message_type(Gtk.MessageType.INFO)
+        self.infobar.set_visible(True)
 
     def show_error(self, message: str):
         box: Gtk.Box = self.infobar.get_content_area()
