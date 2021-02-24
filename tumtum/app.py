@@ -14,11 +14,15 @@
 
 
 import os
+from io import BytesIO
+from threading import Event
+from base64 import b64encode
 from uuid import UUID, uuid4
 from gettext import gettext as _
-from typing import Optional, Dict, Tuple
-from queue import Queue, Empty
+from typing import Optional, Dict, Tuple, List, Deque
+from collections import deque
 from urllib.parse import urljoin
+from dataclasses import field
 
 import gi
 import logbook
@@ -64,7 +68,8 @@ CONTROL_MASK = Gdk.ModifierType.CONTROL_MASK
 @dataclass
 class OverlayDrawData:
     face_box: Optional[cairo.Rectangle] = None
-    nose_box: Optional[cairo.Rectangle] = None
+    nose_bridge: List[Tuple[int, int]] = field(default_factory=list)
+    nose_tip: List[Tuple[int, int]] = field(default_factory=list)
 
 
 def to_camel(string: str) -> str:
@@ -104,6 +109,16 @@ class ChallengeInfo(BaseModel):
         allow_population_by_field_name = True
 
 
+class FrameSubmitRequest(BaseModel):
+    frame_base64: str
+    timestamp: int
+    token: str
+
+    class Config:
+        alias_generator = to_camel
+        allow_population_by_field_name = True
+
+
 class TumTumApplication(Gtk.Application):
     SINK_NAME = 'sink'
     APPSINK_NAME = 'app_sink'
@@ -132,8 +147,9 @@ class TumTumApplication(Gtk.Application):
     raw_result_expander: Optional[Gtk.Expander] = None
     g_event_sources: Dict[str, int] = {}
     frame_size: Optional[Tuple[int, int]] = None
-    overlay_queue: 'Queue[OverlayDrawData]' = Queue(1)
+    overlay_queue: 'Deque[OverlayDrawData]' = deque(maxlen=1)
     challenge_info: Optional[ChallengeInfo] = None
+    flag_submit_frame = Event()
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -253,24 +269,6 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Start device monitoring')
         self.devmonitor.start()
 
-    def get_challenge(self):
-        url_start = urljoin(BACKEND_BASE_URL, 'start')
-        w, h = self.frame_size
-        params = ChallengeStartRequest(image_width=w, image_height=h)
-        session = Soup.Session.new()
-        message = Soup.Message.new('POST', url_start)
-        body = params.json(by_alias=True).encode()
-        logger.debug('To get challenge data from {}, with {}', url_start, body)
-        message.set_request('application/json', Soup.MemoryUse.COPY, body)
-        session.queue_message(message, self.cb_challenge_retrieved)
-        self.show_guide('Put your face into center of box')
-
-    def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
-        raw_body = msg.get_property('response-body-data').get_data()
-        logger.debug('Response: {}', raw_body)
-        self.challenge_info = ChallengeInfo.parse_raw(raw_body)
-        logger.debug('Challenge info: {}', self.challenge_info)
-
     def do_activate(self):
         if not self.window:
             self.build_gstreamer_pipeline()
@@ -304,6 +302,24 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam.remove(old_area)
         self.cont_webcam.add(area)
         area.show()
+
+    def get_challenge(self):
+        url_start = urljoin(BACKEND_BASE_URL, 'start')
+        w, h = self.frame_size
+        params = ChallengeStartRequest(image_width=w, image_height=h)
+        session = Soup.Session.new()
+        message = Soup.Message.new('POST', url_start)
+        body = params.json(by_alias=True).encode()
+        logger.debug('To get challenge data from {}, with {}', url_start, body)
+        message.set_request('application/json', Soup.MemoryUse.COPY, body)
+        session.queue_message(message, self.cb_challenge_retrieved)
+        self.show_guide('Put your face into center of box')
+
+    def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
+        raw_body = msg.get_property('response-body-data').get_data()
+        logger.debug('Response: {}', raw_body)
+        self.challenge_info = ChallengeInfo.parse_raw(raw_body)
+        logger.debug('Challenge info: {}', self.challenge_info)
 
     def reset_result(self):
         self.raw_result_buffer.set_text('')
@@ -375,7 +391,7 @@ class TumTumApplication(Gtk.Application):
         self.get_challenge()
 
     def on_overlay_draw(self, _overlay: GstBase.BaseTransform, context: cairo.Context,
-                        _timestamp: int, _duration: int, user_data: 'Queue[OverlayDrawData]'):
+                        _timestamp: int, _duration: int, user_data: 'Deque[OverlayDrawData]'):
         if not self.challenge_info:
             return
         w = self.challenge_info.area_width
@@ -386,11 +402,10 @@ class TumTumApplication(Gtk.Application):
         context.rectangle(x, y, w, h)
         color = (0.9, 0, 0, 0.6)
         try:
-            found_face = user_data.get_nowait()
-            user_data.task_done()
+            found_face = user_data.popleft()
             fx, fy, fw, fh = found_face.face_box
             face_inside = (fx >= x and fy >= y and fw <= w and fh <= h)
-        except Empty:
+        except IndexError:
             face_inside = False
         if face_inside:
             color = (0, 0.9, 0, 0.6)
@@ -408,10 +423,11 @@ class TumTumApplication(Gtk.Application):
             context.set_source_rgba(*color)
             context.set_line_width(4)
             context.stroke()
-            self.show_guide('Put your nose to the yellow box')
+            # Tell the callback on appsink to submit video frame
+            self.flag_submit_frame.set()
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
-        if appsink.is_eos() or self.overlay_queue.full():
+        if appsink.is_eos():
             return Gst.FlowReturn.OK
         sample: Gst.Sample = appsink.try_pull_sample(0.5)
         buffer: Gst.Buffer = sample.get_buffer()
@@ -429,6 +445,8 @@ class TumTumApplication(Gtk.Application):
         # In Gstreamer 1.18, Gst.MapInfo.data is memoryview instead of bytes
         imgdata = mapinfo.data.tobytes() if isinstance(mapinfo.data, memoryview) else mapinfo.data
         img = Image.frombytes('RGB', (width, height), imgdata)
+        if self.flag_submit_frame.is_set():
+            self.submit_frame(img)
         nimp = np.asarray(img)
         results = face_recognition.face_locations(nimp)
         logger.debug('Result: {}', results)
@@ -436,8 +454,12 @@ class TumTumApplication(Gtk.Application):
             # face_recognition return result as (top, right, bottom, left)
             t, r, b, le = results[0]
             rect = cairo.Rectangle(le, t, r - le, b - t)
-            draw_data = OverlayDrawData(face_box=rect)
-            self.overlay_queue.put_nowait(draw_data)
+            landmarks = face_recognition.face_landmarks(nimp)
+            logger.debug('Landmarks: {}', landmarks)
+            nose_bridge = landmarks[0]['nose_bridge']
+            nose_tip = landmarks[0]['nose_tip']
+            draw_data = OverlayDrawData(face_box=rect, nose_bridge=nose_bridge, nose_tip=nose_tip)
+            self.overlay_queue.append(draw_data)
         return Gst.FlowReturn.OK
 
     def on_evbox_playpause_enter_notify_event(self, box: Gtk.EventBox, event: Gdk.EventCrossing):
@@ -470,6 +492,30 @@ class TumTumApplication(Gtk.Application):
             self.reset_result()
             # Delay set_emit_signals call to prevent scanning old frame
             GLib.timeout_add_seconds(1, app_sink.set_emit_signals, True)
+
+    def submit_frame(self, image: Image.Image):
+        floating_file = BytesIO()
+        image.save(floating_file, 'JPEG')
+        success, timestamp_nano = self.gst_pipeline.query_position(Gst.Format.TIME)
+        if not success:
+            logger.error('Failed to retrieve offset!')
+            return
+        logger.debug('Timestamp: {}', timestamp_nano)
+        url = urljoin(BACKEND_BASE_URL, f'{self.challenge_info.id}/frames')
+        params = FrameSubmitRequest(
+            frame_base64=b64encode(floating_file.getvalue()),
+            timestamp=timestamp_nano / 1000,
+            token=self.challenge_info.token
+        )
+        session = Soup.Session.new()
+        message = Soup.Message.new('PUT', url)
+        body = params.json(by_alias=True).encode()
+        message.set_request('application/json', Soup.MemoryUse.COPY, body)
+        session.queue_message(message, self.cb_frame_submission_done)
+
+    def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message):
+        raw_body = msg.get_property('response-body-data').get_data()
+        logger.debug('Response: {}', raw_body)
 
     def show_about_dialog(self, action: Gio.SimpleAction, param: Optional[GLib.Variant] = None):
         if self.gst_pipeline:
