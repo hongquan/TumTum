@@ -334,13 +334,12 @@ class TumTumApplication(Gtk.Application):
 
     def get_challenge(self):
         logger.debug('Event loop: {}', self.loop)
-        self.run_await(self.state_machine.start)
+        self.run_await(self.state_machine.start, self.infobar)
         url_start = urljoin(BACKEND_BASE_URL, 'start')
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
         logger.debug('To get challenge data from {}, with {}', url_start, params)
         self.request_http('POST', url_start, params, self.cb_challenge_retrieved)
-        self.show_guide('Put your face into center of box')
 
     def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
