@@ -21,7 +21,7 @@ from threading import Event
 from base64 import b64encode
 from uuid import UUID, uuid4
 from gettext import gettext as _
-from typing import Optional, Dict, Tuple, List, Deque
+from typing import Optional, Dict, Tuple, List, Deque, Callable
 from collections import deque
 from urllib.parse import urljoin
 from dataclasses import field
@@ -160,6 +160,7 @@ class TumTumApplication(Gtk.Application):
     flag_submit_frame = Event()
     state_machine = ChallengeLifeCycle()
     loop: AbstractEventLoop
+    http_session: Soup.Session
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -170,10 +171,17 @@ class TumTumApplication(Gtk.Application):
             "More detailed log", None
         )
         self.loop = asyncio.get_event_loop()
+        self.http_session = Soup.Session.new()
 
     # Util to run an async function in our dedicated thread for asyncio event loop.
     def run_await(self, function, *args):
         return asyncio.run_coroutine_threadsafe(function(*args), self.loop)
+
+    def request_http(self, method: str, url: str, data: BaseModel, callback: Callable):
+        message = Soup.Message.new(method, url)
+        body = data.json(by_alias=True).encode()
+        message.set_request('application/json', Soup.MemoryUse.COPY, body)
+        self.http_session.queue_message(message, callback)
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -327,12 +335,8 @@ class TumTumApplication(Gtk.Application):
         url_start = urljoin(BACKEND_BASE_URL, 'start')
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
-        session = Soup.Session.new()
-        message = Soup.Message.new('POST', url_start)
-        body = params.json(by_alias=True).encode()
-        logger.debug('To get challenge data from {}, with {}', url_start, body)
-        message.set_request('application/json', Soup.MemoryUse.COPY, body)
-        session.queue_message(message, self.cb_challenge_retrieved)
+        logger.debug('To get challenge data from {}, with {}', url_start, params)
+        self.request_http('POST', url_start, params, self.cb_challenge_retrieved)
         self.show_guide('Put your face into center of box')
 
     def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
@@ -542,11 +546,7 @@ class TumTumApplication(Gtk.Application):
             timestamp=timestamp_nano / 1000,
             token=self.challenge_info.token
         )
-        session = Soup.Session.new()
-        message = Soup.Message.new('PUT', url)
-        body = params.json(by_alias=True).encode()
-        message.set_request('application/json', Soup.MemoryUse.COPY, body)
-        session.queue_message(message, self.cb_frame_submission_done)
+        self.request_http('PUT', url, params, self.cb_frame_submission_done)
 
     def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
@@ -554,17 +554,14 @@ class TumTumApplication(Gtk.Application):
 
     def verify_challenge(self):
         url = urljoin(BACKEND_BASE_URL, f'{self.challenge_info.id}/verify')
-        session = Soup.Session.new()
-        message = Soup.Message.new('POST', url)
-        body = ChallengeVerifyRequest(token=self.challenge_info.token).json().encode()
-        message.set_request('application/json', Soup.MemoryUse.COPY, body)
+        data = ChallengeVerifyRequest(token=self.challenge_info.token)
         logger.debug('To post to {}', url)
-        session.queue_message(message, self.cb_challenge_verification_done)
+        self.request_http('POST', url, data, self.cb_challenge_verification_done)
         self.btn_pause.set_active(True)
 
     def cb_challenge_verification_done(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
-        logger.debug('Response: {}', raw_body)
+        logger.debug('Challenge verify response: {}', raw_body)
         self.run_await(self.state_machine.stop)
 
     def show_about_dialog(self, action: Gio.SimpleAction, param: Optional[GLib.Variant] = None):
