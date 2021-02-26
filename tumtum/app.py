@@ -123,6 +123,10 @@ class FrameSubmitRequest(BaseModel):
         allow_population_by_field_name = True
 
 
+class ChallengeVerifyRequest(BaseModel):
+    token: str
+
+
 class TumTumApplication(Gtk.Application):
     SINK_NAME = 'sink'
     APPSINK_NAME = 'app_sink'
@@ -395,6 +399,7 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Picked {} {}', path, name)
         ppl_source = self.gst_pipeline.get_by_name(self.GST_SOURCE_NAME)
         self.gst_pipeline.set_state(Gst.State.NULL)
+        self.run_await(self.state_machine.stop)
         ppl_source.set_property('device', path)
         self.gst_pipeline.set_state(Gst.State.PLAYING)
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
@@ -406,6 +411,7 @@ class TumTumApplication(Gtk.Application):
         height = struct['height']
         self.frame_size = (width, height)
         logger.debug('Frame size: {}', self.frame_size)
+        self.run_await(self.state_machine.start)
         self.get_challenge()
 
     def on_overlay_draw(self, _overlay: GstBase.BaseTransform, context: cairo.Context,
@@ -424,13 +430,19 @@ class TumTumApplication(Gtk.Application):
             fx, fy, fw, fh = found_face.face_box
             face_inside = (fx >= x and fy >= y and fx + fw <= x + w and fy + fh <= y + h)
         except IndexError:
+            found_face = None
             face_inside = False
         if face_inside:
             color = (0, 0.9, 0, 0.6)
         context.set_source_rgba(*color)
         context.set_line_width(4)
         context.stroke()
-        if face_inside:
+        if self.state_machine.state in (State.starting, State.stopped):
+            return
+        if self.state_machine.state == State.centering_face and face_inside:
+            self.run_await(self.state_machine.position_nose)
+            return
+        if self.state_machine.state in (State.positioning_nose, State.verifying):
             w = self.challenge_info.nose_width
             h = self.challenge_info.nose_height
             x = self.challenge_info.nose_top
@@ -441,8 +453,11 @@ class TumTumApplication(Gtk.Application):
             context.set_source_rgba(*color)
             context.set_line_width(4)
             context.stroke()
-        if self.state_machine.state == State.centering_face and face_inside:
-            self.run_await(self.state_machine.position_nose)
+            if found_face:
+                nose_x, nose_y = found_face.nose_tip[0]
+                nose_positioned = (x <= nose_x <= x + w and y <= nose_y <= y + h)
+                if nose_positioned:
+                    self.run_await(self.state_machine.verify)
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
         if appsink.is_eos():
@@ -465,9 +480,11 @@ class TumTumApplication(Gtk.Application):
         img = Image.frombytes('RGB', (width, height), imgdata)
         if self.state_machine.state == State.positioning_nose:
             self.submit_frame(img)
+        if self.state_machine.state == State.verifying:
+            self.verify_challenge()
         nimp = np.asarray(img)
         results = face_recognition.face_locations(nimp)
-        logger.debug('Result: {}', results)
+        logger.debug('Faces: {}', results)
         if results:
             # face_recognition return result as (top, right, bottom, left)
             t, r, b, le = results[0]
@@ -534,6 +551,21 @@ class TumTumApplication(Gtk.Application):
     def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
         logger.debug('Response: {}', raw_body)
+
+    def verify_challenge(self):
+        url = urljoin(BACKEND_BASE_URL, f'{self.challenge_info.id}/verify')
+        session = Soup.Session.new()
+        message = Soup.Message.new('POST', url)
+        body = ChallengeVerifyRequest(token=self.challenge_info.token).json().encode()
+        message.set_request('application/json', Soup.MemoryUse.COPY, body)
+        logger.debug('To post to {}', url)
+        session.queue_message(message, self.cb_challenge_verification_done)
+        self.btn_pause.set_active(True)
+
+    def cb_challenge_verification_done(self, session: Soup.Session, msg: Soup.Message):
+        raw_body = msg.get_property('response-body-data').get_data()
+        logger.debug('Response: {}', raw_body)
+        self.run_await(self.state_machine.stop)
 
     def show_about_dialog(self, action: Gio.SimpleAction, param: Optional[GLib.Variant] = None):
         if self.gst_pipeline:

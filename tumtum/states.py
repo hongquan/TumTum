@@ -6,7 +6,8 @@ class ChallengeLifeCycle(statesman.StateMachine):
         starting = 'Starting...'
         centering_face = 'Center face'
         positioning_nose = 'Move nose'
-        stop = 'Stop'
+        verifying = 'Verifying'
+        stopped = 'Stopped'
 
     @statesman.event(None, States.starting)
     async def start(self):
@@ -18,6 +19,14 @@ class ChallengeLifeCycle(statesman.StateMachine):
 
     @statesman.event(source=States.centering_face, target=States.positioning_nose)
     async def position_nose(self):
+        pass
+
+    @statesman.event(source=States.positioning_nose, target=States.verifying)
+    async def verify(self):
+        pass
+
+    @statesman.event(source=States.verifying, target=States.stopped)
+    async def stop(self):
         pass
 
 
