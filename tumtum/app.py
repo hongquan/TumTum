@@ -535,17 +535,15 @@ class TumTumApplication(Gtk.Application):
     def submit_frame(self, image: Image.Image):
         floating_file = BytesIO()
         image.save(floating_file, 'JPEG')
-        success, timestamp_nano = self.gst_pipeline.query_position(Gst.Format.TIME)
-        if not success:
-            logger.error('Failed to retrieve offset!')
-            return
-        logger.debug('Timestamp: {}', timestamp_nano)
+        timestamp_ms = round(time.time() * 1000)
         url = urljoin(BACKEND_BASE_URL, f'{self.challenge_info.id}/frames')
+        # Backend accepts timestamp to microsecond
         params = FrameSubmitRequest(
             frame_base64=b64encode(floating_file.getvalue()),
-            timestamp=timestamp_nano / 1000,
+            timestamp=timestamp_ms,
             token=self.challenge_info.token
         )
+        logger.debug('Submit frame')
         self.request_http('PUT', url, params, self.cb_frame_submission_done)
 
     def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message):
