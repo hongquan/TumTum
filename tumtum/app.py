@@ -205,11 +205,11 @@ class TumTumApplication(Gtk.Application):
     def build_gstreamer_pipeline(self):
         # https://gstreamer.freedesktop.org/documentation/application-development/advanced/pipeline-manipulation.html?gi-language=c#grabbing-data-with-appsink
         # Try GL backend first
-        command = (f'v4l2src name={self.GST_SOURCE_NAME} ! videorate ! video/x-raw,framerate=10/1 !tee name=t ! '
+        command = (f'v4l2src name={self.GST_SOURCE_NAME} ! tee name=t ! '
                    f'queue ! videoconvert ! cairooverlay name={self.GST_OVERLAY_NAME} ! '
                    f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
-                   't. ! queue leaky=2 max-size-buffers=2 ! videoconvert ! video/x-raw,format=RGB !'
-                   f'appsink name={self.APPSINK_NAME} max_buffers=2 drop=1')
+                   't. ! queue leaky=1 max-size-buffers=1 ! videoconvert ! videorate ! video/x-raw,format=RGB,framerate=2/1 !'
+                   f'appsink name={self.APPSINK_NAME} max-buffers=1 drop=1')
         logger.debug('To build pipeline: {}', command)
         try:
             pipeline = Gst.parse_launch(command)
@@ -430,7 +430,7 @@ class TumTumApplication(Gtk.Application):
         context.rectangle(x, y, w, h)
         color = (0.9, 0, 0, 0.6)
         try:
-            found_face = user_data.popleft()
+            found_face = user_data[0]
             fx, fy, fw, fh = found_face.face_box
             face_inside = (fx >= x and fy >= y and fx + fw <= x + w and fy + fh <= y + h)
         except IndexError:
