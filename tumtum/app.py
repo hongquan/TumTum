@@ -422,7 +422,7 @@ class TumTumApplication(Gtk.Application):
         try:
             found_face = user_data.popleft()
             fx, fy, fw, fh = found_face.face_box
-            face_inside = (fx >= x and fy >= y and fw <= w and fh <= h)
+            face_inside = (fx >= x and fy >= y and fx + fw <= x + w and fy + fh <= y + h)
         except IndexError:
             face_inside = False
         if face_inside:
