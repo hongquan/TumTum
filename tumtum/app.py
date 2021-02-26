@@ -14,6 +14,8 @@
 
 
 import os
+import asyncio
+import threading
 from io import BytesIO
 from threading import Event
 from base64 import b64encode
@@ -23,6 +25,7 @@ from typing import Optional, Dict, Tuple, List, Deque
 from collections import deque
 from urllib.parse import urljoin
 from dataclasses import field
+from asyncio import AbstractEventLoop
 
 import gi
 import logbook
@@ -51,6 +54,7 @@ from . import __version__
 from . import ui
 from .resources import get_ui_filepath
 from .prep import get_device_path
+from .states import ChallengeLifeCycle, State
 
 
 logger = Logger(__name__)
@@ -150,6 +154,8 @@ class TumTumApplication(Gtk.Application):
     overlay_queue: 'Deque[OverlayDrawData]' = deque(maxlen=1)
     challenge_info: Optional[ChallengeInfo] = None
     flag_submit_frame = Event()
+    state_machine = ChallengeLifeCycle()
+    loop: AbstractEventLoop
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -159,6 +165,11 @@ class TumTumApplication(Gtk.Application):
             'verbose', ord('v'), GLib.OptionFlags.NONE, GLib.OptionArg.NONE,
             "More detailed log", None
         )
+        self.loop = asyncio.get_event_loop()
+
+    # Util to run an async function in our dedicated thread for asyncio event loop.
+    def run_await(self, function, *args):
+        return asyncio.run_coroutine_threadsafe(function(*args), self.loop)
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -167,6 +178,9 @@ class TumTumApplication(Gtk.Application):
         devmonitor.add_filter('Video/Source', Gst.Caps.from_string('video/x-raw'))
         logger.debug('Monitor: {}', devmonitor)
         self.devmonitor = devmonitor
+        # Run asyncio in a dedicated thread
+        th_loop = threading.Thread(target=run_asyncio_loop, args=(self.loop,), daemon=True)
+        th_loop.start()
 
     def setup_actions(self):
         action_quit = Gio.SimpleAction.new(_('quit'), None)
@@ -304,6 +318,8 @@ class TumTumApplication(Gtk.Application):
         area.show()
 
     def get_challenge(self):
+        logger.debug('Event loop: {}', self.loop)
+        self.run_await(self.state_machine.start)
         url_start = urljoin(BACKEND_BASE_URL, 'start')
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
@@ -320,6 +336,8 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Response: {}', raw_body)
         self.challenge_info = ChallengeInfo.parse_raw(raw_body)
         logger.debug('Challenge info: {}', self.challenge_info)
+        logger.debug('State: {}', self.state_machine.state)
+        self.run_await(self.state_machine.center_face)
 
     def reset_result(self):
         self.raw_result_buffer.set_text('')
@@ -423,8 +441,8 @@ class TumTumApplication(Gtk.Application):
             context.set_source_rgba(*color)
             context.set_line_width(4)
             context.stroke()
-            # Tell the callback on appsink to submit video frame
-            self.flag_submit_frame.set()
+        if self.state_machine.state == State.centering_face and face_inside:
+            self.run_await(self.state_machine.position_nose)
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
         if appsink.is_eos():
@@ -445,7 +463,7 @@ class TumTumApplication(Gtk.Application):
         # In Gstreamer 1.18, Gst.MapInfo.data is memoryview instead of bytes
         imgdata = mapinfo.data.tobytes() if isinstance(mapinfo.data, memoryview) else mapinfo.data
         img = Image.frombytes('RGB', (width, height), imgdata)
-        if self.flag_submit_frame.is_set():
+        if self.state_machine.state == State.positioning_nose:
             self.submit_frame(img)
         nimp = np.asarray(img)
         results = face_recognition.face_locations(nimp)
@@ -542,9 +560,18 @@ class TumTumApplication(Gtk.Application):
         self.infobar.set_visible(True)
 
     def quit_from_action(self, action: Gio.SimpleAction, param: Optional[GLib.Variant] = None):
+        logger.debug('Quit...')
         self.quit()
 
     def quit(self):
         if self.gst_pipeline:
             self.gst_pipeline.set_state(Gst.State.NULL)
+        self.loop.stop()
         super().quit()
+
+
+def run_asyncio_loop(loop: AbstractEventLoop):
+    asyncio.set_event_loop(loop)
+    logger.debug('Run {}', loop)
+    loop.run_forever()
+    return False
