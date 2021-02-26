@@ -14,6 +14,7 @@
 
 
 import os
+import time
 import asyncio
 import threading
 from io import BytesIO
@@ -49,7 +50,7 @@ gi.require_foreign('cairo')
 
 from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp, Soup
 
-from .consts import APP_ID, SHORT_NAME, BACKEND_BASE_URL
+from .consts import APP_ID, SHORT_NAME, BACKEND_BASE_URL, FPS
 from . import __version__
 from . import ui
 from .resources import get_ui_filepath
@@ -208,7 +209,8 @@ class TumTumApplication(Gtk.Application):
         command = (f'v4l2src name={self.GST_SOURCE_NAME} ! tee name=t ! '
                    f'queue ! videoconvert ! cairooverlay name={self.GST_OVERLAY_NAME} ! '
                    f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
-                   't. ! queue leaky=1 max-size-buffers=1 ! videoconvert ! videorate ! video/x-raw,format=RGB,framerate=2/1 !'
+                   't. ! queue leaky=1 max-size-buffers=1 ! videoconvert ! '
+                   f'videorate ! video/x-raw,format=RGB,framerate={FPS}/1 ! '
                    f'appsink name={self.APPSINK_NAME} max-buffers=1 drop=1')
         logger.debug('To build pipeline: {}', command)
         try:
@@ -221,7 +223,8 @@ class TumTumApplication(Gtk.Application):
             # Fallback to non-GL
             command = (f'v4l2src name={self.GST_SOURCE_NAME} ! videoconvert ! tee name=t ! '
                        f'queue ! cairooverlay name={self.GST_OVERLAY_NAME} ! gtksink name={self.SINK_NAME} '
-                       't. ! queue leaky=1 max-size-buffers=2 ! video/x-raw,format=RGB ! '
+                       't. ! queue leaky=1 max-size-buffers=2 ! '
+                       f'videorate ! video/x-raw,format=RGB,framerate={FPS}/1 ! '
                        f'appsink name={self.APPSINK_NAME}')
             logger.debug('To build pipeline: {}', command)
             try:
@@ -459,6 +462,7 @@ class TumTumApplication(Gtk.Application):
             context.stroke()
             if found_face:
                 nose_x, nose_y = found_face.nose_tip[0]
+                logger.debug('Detected nose at: {}', (nose_x, nose_y))
                 nose_positioned = (x <= nose_x <= x + w and y <= nose_y <= y + h)
                 if nose_positioned:
                     self.run_await(self.state_machine.verify)
