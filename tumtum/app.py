@@ -193,7 +193,7 @@ class TumTumApplication(Gtk.Application):
     def build_gstreamer_pipeline(self):
         # https://gstreamer.freedesktop.org/documentation/application-development/advanced/pipeline-manipulation.html?gi-language=c#grabbing-data-with-appsink
         # Try GL backend first
-        command = (f'v4l2src name={self.GST_SOURCE_NAME} ! tee name=t ! '
+        command = (f'v4l2src name={self.GST_SOURCE_NAME} ! videorate ! video/x-raw,framerate=10/1 !tee name=t ! '
                    f'queue ! videoconvert ! cairooverlay name={self.GST_OVERLAY_NAME} ! '
                    f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
                    't. ! queue leaky=2 max-size-buffers=2 ! videoconvert ! video/x-raw,format=RGB !'
