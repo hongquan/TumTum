@@ -87,16 +87,13 @@ class TumTumApplication(Gtk.Application):
     # calling "set_active" on it doesn't work! We have to call on the Pause button instead
     btn_pause: Optional[Gtk.RadioToolButton] = None
     gst_pipeline: Optional[Gst.Pipeline] = None
-    raw_result_buffer: Optional[Gtk.TextBuffer] = None
     webcam_combobox: Optional[Gtk.ComboBox] = None
     webcam_store: Optional[Gtk.ListStore] = None
     # Box holds the emplement to display when no image is chosen
     devmonitor: Optional[Gst.DeviceMonitor] = None
     clipboard: Optional[Gtk.Clipboard] = None
-    result_display: Optional[Gtk.Frame] = None
     progress_bar: Optional[Gtk.ProgressBar] = None
     infobar: Optional[Gtk.InfoBar] = None
-    raw_result_expander: Optional[Gtk.Expander] = None
     g_event_sources: Dict[str, int] = {}
     frame_size: Optional[Tuple[int, int]] = None
     overlay_queue: 'Deque[OverlayDrawData]' = deque(maxlen=1)
@@ -201,15 +198,12 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam = builder.get_object('cont-webcam')
         if self.gst_pipeline:
             self.replace_webcam_placeholder_with_gstreamer_sink()
-        self.raw_result_buffer = builder.get_object('raw-result-buffer')
-        self.raw_result_expander = builder.get_object('raw-result-expander')
         self.webcam_store = builder.get_object('webcam-list')
         self.webcam_combobox = builder.get_object('webcam-combobox')
         main_menubutton: Gtk.MenuButton = builder.get_object('main-menubutton')
         main_menubutton.set_menu_model(ui.build_app_menu_model())
         self.clipboard = Gtk.Clipboard.get_for_display(Gdk.Display.get_default(),
                                                        Gdk.SELECTION_CLIPBOARD)
-        self.result_display = builder.get_object('result-display-frame')
         self.progress_bar = builder.get_object('progress-bar')
         self.infobar = builder.get_object('info-bar')
         box_playpause = builder.get_object('evbox-playpause')
@@ -291,13 +285,6 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Challenge info: {}', self.challenge_info)
         logger.debug('State: {}', self.state_machine.state)
         self.run_await(self.state_machine.center_face)
-
-    def reset_result(self):
-        self.raw_result_buffer.set_text('')
-        self.raw_result_expander.set_expanded(False)
-        child = self.result_display.get_child()
-        if child:
-            self.result_display.remove(child)
 
     def on_device_monitor_message(self, bus: Gst.Bus, message: Gst.Message, user_data):
         logger.debug('Message: {}', message)
@@ -471,7 +458,6 @@ class TumTumApplication(Gtk.Application):
         else:
             r = source.set_state(Gst.State.PLAYING)
             logger.debug('Change {} state to playing: {}', source.get_name(), r)
-            self.reset_result()
             # Delay set_emit_signals call to prevent scanning old frame
             GLib.timeout_add_seconds(1, app_sink.set_emit_signals, True)
 
