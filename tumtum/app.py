@@ -105,7 +105,6 @@ class TumTumApplication(Gtk.Application):
     state_machine = ChallengeLifeCycle()
     executor = ProcessPoolExecutor()
     loop: AbstractEventLoop
-    http_session: Soup.Session
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -116,17 +115,17 @@ class TumTumApplication(Gtk.Application):
             "More detailed log", None
         )
         self.loop = asyncio.get_event_loop()
-        self.http_session = Soup.Session.new()
 
     # Util to run an async function in our dedicated thread for asyncio event loop.
     def run_await(self, function, *args):
         return asyncio.run_coroutine_threadsafe(function(*args), self.loop)
 
     def request_http(self, method: str, url: str, data: BaseModel, callback: Callable):
+        session = Soup.Session.new()
         message = Soup.Message.new(method, url)
         body = data.json(by_alias=True).encode()
         message.set_request('application/json', Soup.MemoryUse.COPY, body)
-        self.http_session.queue_message(message, callback)
+        session.queue_message(message, callback)
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -480,7 +479,7 @@ class TumTumApplication(Gtk.Application):
 
     def pass_face_detection_result(self, future: Future):
         result = future.result()
-        logger.debug('Got result of face detection: {}', result)
+        logger.debug('Extracted from image: {}', result)
         if result:
             self.overlay_queue.append(result)
 
