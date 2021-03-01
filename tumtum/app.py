@@ -20,23 +20,19 @@ import threading
 from io import BytesIO
 from threading import Event
 from base64 import b64encode
-from uuid import UUID, uuid4
 from gettext import gettext as _
-from typing import Optional, Dict, Tuple, List, Deque, Callable
+from typing import Optional, Dict, Tuple, Deque, Callable
 from collections import deque
 from urllib.parse import urljoin
-from dataclasses import field
 from asyncio import AbstractEventLoop
+from concurrent.futures import ProcessPoolExecutor, Future
 
 import gi
 import logbook
 import cairo
-import numpy as np
-import face_recognition
 from logbook import Logger
 from PIL import Image
-from pydantic import BaseModel, Field
-from pydantic.dataclasses import dataclass
+from pydantic import BaseModel
 
 gi.require_version('GLib', '2.0')
 gi.require_version('Gtk', '3.0')
@@ -56,6 +52,11 @@ from . import ui
 from .resources import get_ui_filepath
 from .prep import get_device_path
 from .states import ChallengeLifeCycle, State
+from .models import (
+    OverlayDrawData, ChallengeStartRequest, ChallengeInfo,
+    FrameSubmitRequest, ChallengeVerifyRequest
+)
+from .tasks import detect_face
 
 
 logger = Logger(__name__)
@@ -68,64 +69,6 @@ CONTROL_MASK = Gdk.ModifierType.CONTROL_MASK
 # Better integration:
 #   gst-launch-1.0 v4l2src device=/dev/video0 ! videoconvert ! gtksink
 #   gst-launch-1.0 v4l2src ! videoconvert ! glsinkbin sink=gtkglsink
-
-
-@dataclass
-class OverlayDrawData:
-    face_box: Optional[cairo.Rectangle] = None
-    nose_bridge: List[Tuple[int, int]] = field(default_factory=list)
-    nose_tip: List[Tuple[int, int]] = field(default_factory=list)
-
-
-def to_camel(string: str) -> str:
-    parts = string.split('_')
-    parts[1:] = [w.capitalize() for w in parts[1:]]
-    return ''.join(parts)
-
-
-class ChallengeStartRequest(BaseModel):
-    user_id: UUID = Field(default_factory=uuid4)
-    image_width: int
-    image_height: int
-
-    class Config:
-        alias_generator = to_camel
-        allow_population_by_field_name = True
-
-
-class ChallengeInfo(BaseModel):
-    id: UUID
-    user_id: UUID
-    image_width: int
-    image_height: int
-    area_left: int
-    area_top: int
-    area_width: int
-    area_height: int
-    min_face_area_percent: int
-    nose_left: int
-    nose_top: int
-    nose_width: int
-    nose_height: int
-    token: str
-
-    class Config:
-        alias_generator = to_camel
-        allow_population_by_field_name = True
-
-
-class FrameSubmitRequest(BaseModel):
-    frame_base64: str
-    timestamp: int
-    token: str
-
-    class Config:
-        alias_generator = to_camel
-        allow_population_by_field_name = True
-
-
-class ChallengeVerifyRequest(BaseModel):
-    token: str
 
 
 class TumTumApplication(Gtk.Application):
@@ -160,6 +103,7 @@ class TumTumApplication(Gtk.Application):
     challenge_info: Optional[ChallengeInfo] = None
     flag_submit_frame = Event()
     state_machine = ChallengeLifeCycle()
+    executor = ProcessPoolExecutor()
     loop: AbstractEventLoop
     http_session: Soup.Session
 
@@ -489,19 +433,11 @@ class TumTumApplication(Gtk.Application):
             self.submit_frame(img)
         if self.state_machine.state == State.verifying:
             self.verify_challenge()
-        nimp = np.asarray(img)
-        results = face_recognition.face_locations(nimp)
-        logger.debug('Faces: {}', results)
-        if results:
-            # face_recognition return result as (top, right, bottom, left)
-            t, r, b, le = results[0]
-            rect = cairo.Rectangle(le, t, r - le, b - t)
-            landmarks = face_recognition.face_landmarks(nimp)
-            logger.debug('Landmarks: {}', landmarks)
-            nose_bridge = landmarks[0]['nose_bridge']
-            nose_tip = landmarks[0]['nose_tip']
-            draw_data = OverlayDrawData(face_box=rect, nose_bridge=nose_bridge, nose_tip=nose_tip)
-            self.overlay_queue.append(draw_data)
+        future = self.executor.submit(detect_face, img)
+        # future.add_done_callback(self.pass_face_detection_result)
+        drawinfo = future.result(1)
+        if drawinfo:
+            self.overlay_queue.append(drawinfo)
         return Gst.FlowReturn.OK
 
     def on_evbox_playpause_enter_notify_event(self, box: Gtk.EventBox, event: Gdk.EventCrossing):
@@ -534,6 +470,12 @@ class TumTumApplication(Gtk.Application):
             self.reset_result()
             # Delay set_emit_signals call to prevent scanning old frame
             GLib.timeout_add_seconds(1, app_sink.set_emit_signals, True)
+
+    def pass_face_detection_result(self, future: Future):
+        result = future.result()
+        logger.debug('Got result of face detection: {}', result)
+        if result:
+            self.overlay_queue.append(result)
 
     def submit_frame(self, image: Image.Image):
         floating_file = BytesIO()
@@ -596,6 +538,7 @@ class TumTumApplication(Gtk.Application):
     def quit(self):
         if self.gst_pipeline:
             self.gst_pipeline.set_state(Gst.State.NULL)
+        self.executor.shutdown(True)
         self.loop.stop()
         super().quit()
 
