@@ -153,7 +153,7 @@ class TumTumApplication(Gtk.Application):
         command = (f'v4l2src name={self.GST_SOURCE_NAME} ! tee name=t ! '
                    f'queue ! videoconvert ! cairooverlay name={self.GST_OVERLAY_NAME} ! '
                    f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
-                   't. ! queue leaky=1 max-size-buffers=1 ! videoconvert ! '
+                   't. ! queue leaky=2 ! videoconvert ! '
                    f'videorate ! video/x-raw,format=RGB,framerate={FPS}/1 ! '
                    f'appsink name={self.APPSINK_NAME} max-buffers=1 drop=1')
         logger.debug('To build pipeline: {}', command)
@@ -433,11 +433,9 @@ class TumTumApplication(Gtk.Application):
             self.submit_frame(img)
         if self.state_machine.state == State.verifying:
             self.verify_challenge()
+            return Gst.FlowReturn.OK
         future = self.executor.submit(detect_face, img)
-        # future.add_done_callback(self.pass_face_detection_result)
-        drawinfo = future.result(1)
-        if drawinfo:
-            self.overlay_queue.append(drawinfo)
+        future.add_done_callback(self.pass_face_detection_result)
         return Gst.FlowReturn.OK
 
     def on_evbox_playpause_enter_notify_event(self, box: Gtk.EventBox, event: Gdk.EventCrossing):
