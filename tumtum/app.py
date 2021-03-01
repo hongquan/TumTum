@@ -404,17 +404,15 @@ class TumTumApplication(Gtk.Application):
             context.stroke()
             if found_face:
                 nose_tip: List[Tuple[int, int]] = found_face.nose_tip
-                nose_x, nose_y = nose_tip[0]
-                context.move_to(nose_x, nose_y)
+                first_x, first_y = nose_tip[0]
+                context.move_to(first_x, first_y)
                 context.set_source_rgba(1, 0.6, 0, 0.6)
                 context.set_line_width(2)
                 for nx, ny in nose_tip[1:]:
                     context.line_to(nx, ny)
                 context.stroke()
                 logger.debug('Detected nose at: {}', nose_tip)
-                mi = len(nose_tip) // 2
-                mi_x, mi_y = nose_tip[mi]
-                nose_positioned = (x <= mi_x <= x + w and y <= mi_y <= y + h)
+                nose_positioned = all((x <= n_x <= x + w and y <= n_y <= y + h) for n_x, n_y in nose_tip)
                 if nose_positioned:
                     self.run_await(self.state_machine.verify)
 
@@ -479,7 +477,7 @@ class TumTumApplication(Gtk.Application):
 
     def pass_face_detection_result(self, future: Future):
         result = future.result()
-        logger.debug('Extracted from image: {}', result)
+        logger.debug('Image processing: {}', result)
         if result:
             self.overlay_queue.append(result)
 
