@@ -21,7 +21,7 @@ from io import BytesIO
 from threading import Event
 from base64 import b64encode
 from gettext import gettext as _
-from typing import Optional, Dict, Tuple, Deque, Callable
+from typing import Optional, Dict, Tuple, List, Deque, Callable
 from collections import deque
 from urllib.parse import urljoin
 from asyncio import AbstractEventLoop
@@ -155,7 +155,7 @@ class TumTumApplication(Gtk.Application):
                    f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
                    't. ! queue leaky=2 ! videoconvert ! '
                    f'videorate ! video/x-raw,format=RGB,framerate={FPS}/1 ! '
-                   f'appsink name={self.APPSINK_NAME} max-buffers=1 drop=1')
+                   f'appsink name={self.APPSINK_NAME} max-buffers=1 drop=true')
         logger.debug('To build pipeline: {}', command)
         try:
             pipeline = Gst.parse_launch(command)
@@ -376,7 +376,7 @@ class TumTumApplication(Gtk.Application):
         context.rectangle(x, y, w, h)
         color = (0.9, 0, 0, 0.6)
         try:
-            found_face = user_data[0]
+            found_face: OverlayDrawData = user_data[-1]
             fx, fy, fw, fh = found_face.face_box
             face_inside = (fx >= x and fy >= y and fx + fw <= x + w and fy + fh <= y + h)
         except IndexError:
@@ -404,9 +404,18 @@ class TumTumApplication(Gtk.Application):
             context.set_line_width(4)
             context.stroke()
             if found_face:
-                nose_x, nose_y = found_face.nose_tip[0]
-                logger.debug('Detected nose at: {}', (nose_x, nose_y))
-                nose_positioned = (x <= nose_x <= x + w and y <= nose_y <= y + h)
+                nose_tip: List[Tuple[int, int]] = found_face.nose_tip
+                nose_x, nose_y = nose_tip[0]
+                context.move_to(nose_x, nose_y)
+                context.set_source_rgba(1, 0.6, 0, 0.6)
+                context.set_line_width(2)
+                for nx, ny in nose_tip[1:]:
+                    context.line_to(nx, ny)
+                context.stroke()
+                logger.debug('Detected nose at: {}', nose_tip)
+                mi = len(nose_tip) // 2
+                mi_x, mi_y = nose_tip[mi]
+                nose_positioned = (x <= mi_x <= x + w and y <= mi_y <= y + h)
                 if nose_positioned:
                     self.run_await(self.state_machine.verify)
 
