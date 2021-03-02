@@ -1,3 +1,4 @@
+import dataclasses
 from uuid import uuid4, UUID
 from dataclasses import field
 from typing import Optional, NamedTuple, List, Tuple
@@ -69,3 +70,26 @@ class FrameSubmitRequest(BaseModel):
 
 class ChallengeVerifyRequest(BaseModel):
     token: str
+
+
+@dataclasses.dataclass
+class Backend:
+    start_url: str
+    verify_url: str
+
+
+@dataclass
+class SSTSetting:
+    username: str
+    password: str
+    base_url: str
+
+
+@dataclass
+class AWSSetting:
+    domain: str
+
+
+class AppSettings(BaseModel):
+    sst: SSTSetting
+    aws_demo: AWSSetting

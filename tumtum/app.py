@@ -28,8 +28,9 @@ from asyncio import AbstractEventLoop
 from concurrent.futures import ProcessPoolExecutor, Future
 
 import gi
-import logbook
+import toml
 import cairo
+import logbook
 from logbook import Logger
 from PIL import Image
 from pydantic import BaseModel
@@ -46,15 +47,15 @@ gi.require_foreign('cairo')
 
 from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp, Soup
 
-from .consts import APP_ID, SHORT_NAME, BACKEND_BASE_URL, FPS
+from .consts import APP_ID, SHORT_NAME, BACKEND_BASE_URL, FPS, BACKENDS
 from . import __version__
 from . import ui
-from .resources import get_ui_filepath
+from .resources import get_ui_filepath, get_config_path, load_config
 from .prep import get_device_path
 from .states import ChallengeLifeCycle, State
 from .models import (
     OverlayDrawData, ChallengeStartRequest, ChallengeInfo,
-    FrameSubmitRequest, ChallengeVerifyRequest
+    FrameSubmitRequest, ChallengeVerifyRequest, AppSettings
 )
 from .tasks import detect_face
 
@@ -74,8 +75,6 @@ CONTROL_MASK = Gdk.ModifierType.CONTROL_MASK
 class TumTumApplication(Gtk.Application):
     SINK_NAME = 'sink'
     APPSINK_NAME = 'app_sink'
-    STACK_CHILD_NAME_WEBCAM = 'src_webcam'
-    STACK_CHILD_NAME_IMAGE = 'src_image'
     GST_SOURCE_NAME = 'webcam_source'
     GST_OVERLAY_NAME = 'overlay_cairo'
     window: Optional[Gtk.Window] = None
@@ -89,6 +88,8 @@ class TumTumApplication(Gtk.Application):
     gst_pipeline: Optional[Gst.Pipeline] = None
     webcam_combobox: Optional[Gtk.ComboBox] = None
     webcam_store: Optional[Gtk.ListStore] = None
+    backend_combobox: Optional[Gtk.ComboBox] = None
+    backend_store: Optional[Gtk.ComboBox] = None
     # Box holds the emplement to display when no image is chosen
     devmonitor: Optional[Gst.DeviceMonitor] = None
     clipboard: Optional[Gtk.Clipboard] = None
@@ -200,6 +201,8 @@ class TumTumApplication(Gtk.Application):
             self.replace_webcam_placeholder_with_gstreamer_sink()
         self.webcam_store = builder.get_object('webcam-list')
         self.webcam_combobox = builder.get_object('webcam-combobox')
+        self.backend_store = builder.get_object('backend-list')
+        self.backend_combobox = builder.get_object('backend-combobox')
         main_menubutton: Gtk.MenuButton = builder.get_object('main-menubutton')
         main_menubutton.set_menu_model(ui.build_app_menu_model())
         self.clipboard = Gtk.Clipboard.get_for_display(Gdk.Display.get_default(),
@@ -219,6 +222,7 @@ class TumTumApplication(Gtk.Application):
             'on_evbox_playpause_enter_notify_event': self.on_evbox_playpause_enter_notify_event,
             'on_evbox_playpause_leave_notify_event': self.on_evbox_playpause_leave_notify_event,
             'on_info_bar_response': self.on_info_bar_response,
+            'on_btn_pref_clicked': self.on_btn_pref_clicked,
         }
 
     def discover_webcam(self):
@@ -269,10 +273,16 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam.add(area)
         area.show()
 
+    def get_active_backend(self) -> Dict[str, str]:
+        liter = self.backend_combobox.get_active_iter()
+        name, codename = self.backend_store[liter]
+        return BACKENDS[codename]
+
     def get_challenge(self):
         logger.debug('Event loop: {}', self.loop)
         self.run_await(self.state_machine.start, self.infobar)
-        url_start = urljoin(BACKEND_BASE_URL, 'start')
+        backend = self.get_active_backend()
+        url_start = urljoin(backend['base_url'], 'start')
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
         logger.debug('To get challenge data from {}, with {}', url_start, params)
@@ -446,6 +456,34 @@ class TumTumApplication(Gtk.Application):
 
     def on_info_bar_response(self, infobar: Gtk.InfoBar, response_id: int):
         infobar.set_visible(False)
+
+    def on_btn_pref_clicked(self, button: Gtk.Button):
+        source = get_ui_filepath('settings.glade')
+        builder: Gtk.Builder = Gtk.Builder.new_from_file(str(source))
+        dlg_settings: Gtk.Dialog = builder.get_object('dlg-settings')
+        settings = load_config()
+        builder.get_object('sst-username').set_text(settings.sst.username)
+        builder.get_object('sst-password').set_text(settings.sst.password)
+        builder.get_object('sst-base-url').set_text(settings.sst.base_url)
+        builder.get_object('aws-domain').set_text(settings.aws_demo.domain)
+        response = dlg_settings.run()
+        logger.debug('Dialog result {}', response)
+        if response == Gtk.ResponseType.OK:
+            settings_data = {
+                'sst': {
+                    'base_url': builder.get_object('sst-base-url').get_text(),
+                    'username': builder.get_object('sst-username').get_text(),
+                    'password': builder.get_object('sst-password').get_text(),
+                },
+                'aws_demo': {
+                    'domain': builder.get_object('aws-domain').get_text()
+                }
+            }
+            settings = AppSettings.parse_obj(settings_data)
+            logger.debug('New settings: {}', settings)
+            filepath = get_config_path()
+            filepath.write_text(toml.dumps(settings.dict()))
+        dlg_settings.destroy()
 
     def play_webcam_video(self, widget: Optional[Gtk.Widget] = None):
         if not self.gst_pipeline:

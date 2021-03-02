@@ -1,10 +1,13 @@
 from pathlib import Path
 
 import gi
+import toml
+from pydantic import ValidationError
 
 gi.require_version('Gio', '2.0')
 
-from .consts import SHORT_NAME
+from .consts import SHORT_NAME, DEFAULT_SETTINGS
+from .models import AppSettings
 
 
 # Folder to look for icon, glade files
@@ -58,3 +61,20 @@ def get_ui_filepath(filename: str) -> Path:
 def get_ui_source(filename: str) -> str:
     filepath = get_ui_filepath(filename)
     return filepath.read_text()
+
+
+def get_config_path() -> Path:
+    return Path(f'~/.config/{SHORT_NAME}.toml').expanduser()
+
+
+def load_config() -> AppSettings:
+    filepath = get_config_path()
+    if filepath.exists():
+        data = toml.loads(filepath.read_text())
+        try:
+            return AppSettings.parse_obj(data)
+        except ValidationError:
+            data = {}
+    if not data:
+        data = DEFAULT_SETTINGS
+    return AppSettings.parse_obj(data)
