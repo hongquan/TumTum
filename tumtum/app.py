@@ -281,6 +281,8 @@ class TumTumApplication(Gtk.Application):
     def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
         logger.debug('Response: {}', raw_body)
+        if not raw_body:
+            return
         self.challenge_info = ChallengeInfo.parse_raw(raw_body)
         logger.debug('Challenge info: {}', self.challenge_info)
         logger.debug('State: {}', self.state_machine.state)
@@ -427,8 +429,11 @@ class TumTumApplication(Gtk.Application):
         if self.state_machine.state == State.verifying:
             self.verify_challenge()
             return Gst.FlowReturn.OK
-        future = self.executor.submit(detect_face, img)
-        future.add_done_callback(self.pass_face_detection_result)
+        try:
+            future = self.executor.submit(detect_face, img)
+            future.add_done_callback(self.pass_face_detection_result)
+        except RuntimeError:
+            logger.warning('Executor is already shutdown')
         return Gst.FlowReturn.OK
 
     def on_evbox_playpause_enter_notify_event(self, box: Gtk.EventBox, event: Gdk.EventCrossing):
