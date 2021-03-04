@@ -2,7 +2,11 @@ import dataclasses
 from abc import ABCMeta, abstractmethod
 
 import yarl
+from logbook import Logger
 from .models import AWSSetting, SSTSetting
+
+
+logger = Logger(__name__)
 
 
 class Backend(metaclass=ABCMeta):
@@ -31,18 +35,18 @@ class AWSBackend(Backend):
     _start_url = 'start'
     _submit_frame_url = 'frames'
     _verify_url = 'verify'
-    _settings: AWSSetting
+    _settings: AWSSetting = dataclasses.field(init=False)
 
     @property
     def start_url(self) -> str:
-        yarl.URL(self._base_url).with_host(self.domain).join(self._start_url)
+        return str(yarl.URL(self._base_url).with_host(self.domain).join(yarl.URL(self._start_url)))
 
     def get_submit_frame_url(self, challenge_id: str) -> str:
-        url = yarl.URL(self._base_url).with_host(self.domain).join(challenge_id).join(self._submit_frame_url)
+        url = yarl.URL(self._base_url).with_host(self.domain).join(yarl.URL(f'{challenge_id}/{self._submit_frame_url}'))
         return str(url)
 
     def get_verify_url(self, challenge_id: str):
-        return str(yarl.URL(self._base_url).with_host(self.domain).join(challenge_id).join(self._verify_url))
+        return str(yarl.URL(self._base_url).with_host(self.domain).join(yarl.URL(f'{challenge_id}/{self._verify_url}')))
 
     @classmethod
     def from_settings(cls, settings: AWSSetting):
@@ -53,24 +57,25 @@ class AWSBackend(Backend):
 
 @dataclasses.dataclass
 class SSTBackend(Backend):
-    _base_url = 'http://localhost:8000'
-    _settings: SSTSetting
+    _base_url = 'http://localhost:8000/liveness-challenge/'
+    _settings: SSTSetting = dataclasses.field(init=False)
     username: str
     password: str
 
     @property
     def start_url(self):
-        yarl.URL(self._base_url).join(self._start_url)
+        logger.debug('Base URL: {}', self._base_url)
+        return str(yarl.URL(self._base_url).join(yarl.URL(self._start_url)))
 
     def get_submit_frame_url(self, challenge_id: str) -> str:
-        return str(yarl.URL(self._base_url).join(challenge_id).join(self._submit_frame_url))
+        return str(yarl.URL(self._base_url).join(yarl.URL(f'{challenge_id}/{self._submit_frame_url}')))
 
     def get_verify_url(self, challenge_id: str) -> str:
-        return str(yarl.URL(self._base_url).join(challenge_id).join(self._verify_url))
+        return str(yarl.URL(self._base_url).join(yarl.URL(f'{challenge_id}/{self._verify_url}')))
 
     @classmethod
     def from_settings(cls, settings: SSTSetting):
-        obj = cls(settings.username, settings.password)
+        obj = cls(username=settings.username, password=settings.password)
         obj._base_url = settings.base_url
         obj._settings = settings
         return obj

@@ -118,9 +118,17 @@ class TumTumApplication(Gtk.Application):
     def run_await(self, function, *args):
         return asyncio.run_coroutine_threadsafe(function(*args), self.loop)
 
-    def request_http(self, method: str, url: str, data: BaseModel, callback: Callable):
+    def request_http(self, method: str, url: str, data: BaseModel, callback: Callable, basic_auth=()):
         session = Soup.Session.new()
-        message = Soup.Message.new(method, url)
+        uri = Soup.URI.new(url)
+        if basic_auth:
+            logger.debug('Set auth')
+            uri.set_user(basic_auth[0])
+            try:
+                uri.set_password(basic_auth[1])
+            except IndexError:
+                pass
+        message = Soup.Message.new_from_uri(method, uri)
         body = data.json(by_alias=True).encode()
         message.set_request('application/json', Soup.MemoryUse.COPY, body)
         session.queue_message(message, callback)
@@ -223,6 +231,7 @@ class TumTumApplication(Gtk.Application):
             'on_evbox_playpause_leave_notify_event': self.on_evbox_playpause_leave_notify_event,
             'on_info_bar_response': self.on_info_bar_response,
             'on_btn_pref_clicked': self.on_btn_pref_clicked,
+            'on_backend_combobox_changed': self.on_backend_combobox_changed,
         }
 
     def discover_webcam(self):
@@ -278,21 +287,27 @@ class TumTumApplication(Gtk.Application):
         name, codename = self.backend_store[liter]
         settings = load_config()
         if codename == 'aws_demo':
-            return AWSBackend(settings.aws_demo)
-        return SSTBackend(settings.sst)
+            return AWSBackend.from_settings(settings.aws_demo)
+        return SSTBackend.from_settings(settings.sst)
 
     def get_challenge(self):
         logger.debug('Event loop: {}', self.loop)
         self.run_await(self.state_machine.start, self.infobar)
         backend = self.get_active_backend()
         url = backend.start_url
+        if isinstance(backend, SSTBackend):
+            auth = (backend.username, backend.password)
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
         logger.debug('To get challenge data from {}, with {}', url, params)
-        self.request_http('POST', url, params, self.cb_challenge_retrieved)
+        self.request_http('POST', url, params, self.cb_challenge_retrieved, auth)
 
     def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
+        status = msg.get_property('status-code')
         raw_body = msg.get_property('response-body-data').get_data()
+        if status < 200 or status >= 300:
+            logger.error('Server responded error: {}', raw_body)
+            return
         logger.debug('Response: {}', raw_body)
         if not raw_body:
             return
@@ -356,14 +371,21 @@ class TumTumApplication(Gtk.Application):
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
         app_sink.set_emit_signals(True)
 
+    def on_backend_combobox_changed(self, combo: Gtk.ComboBox):
+        self.gst_pipeline.set_state(Gst.State.NULL)
+        self.run_await(self.state_machine.stop)
+        self.gst_pipeline.set_state(Gst.State.PLAYING)
+        app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
+        app_sink.set_emit_signals(True)
+        self.run_await(self.state_machine.start)
+        self.get_challenge()
+
     def on_overlay_caps_changed(self, _overlay: GstBase.BaseTransform, caps: Gst.Caps):
         struct: Gst.Structure = caps[0]
         width = struct['width']
         height = struct['height']
         self.frame_size = (width, height)
         logger.debug('Frame size: {}', self.frame_size)
-        self.run_await(self.state_machine.start)
-        self.get_challenge()
 
     def on_overlay_draw(self, _overlay: GstBase.BaseTransform, context: cairo.Context,
                         _timestamp: int, _duration: int, user_data: 'Deque[OverlayDrawData]'):
@@ -420,6 +442,8 @@ class TumTumApplication(Gtk.Application):
 
     def on_new_webcam_sample(self, appsink: GstApp.AppSink) -> Gst.FlowReturn:
         if appsink.is_eos():
+            return Gst.FlowReturn.OK
+        if self.state_machine.state in (None, State.starting, State.stopped):
             return Gst.FlowReturn.OK
         sample: Gst.Sample = appsink.try_pull_sample(0.5)
         buffer: Gst.Buffer = sample.get_buffer()

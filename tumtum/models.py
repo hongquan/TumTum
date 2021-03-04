@@ -4,7 +4,6 @@ from typing import Optional, NamedTuple, List, Tuple
 
 from pydantic import BaseModel, Field, AnyHttpUrl
 from pydantic.dataclasses import dataclass
-from pydantic_initialized import initialized
 
 
 class Rectangle(NamedTuple):
@@ -37,7 +36,6 @@ class ChallengeStartRequest(BaseModel):
         allow_population_by_field_name = True
 
 
-@initialized
 class ChallengeInfo(BaseModel):
     id: UUID
     user_id: UUID
@@ -83,7 +81,6 @@ class AWSSetting(BaseModel):
     domain: str
 
 
-@initialized
 class AppSettings(BaseModel):
     sst: SSTSetting
     aws_demo: AWSSetting
