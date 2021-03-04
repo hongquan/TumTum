@@ -295,6 +295,8 @@ class TumTumApplication(Gtk.Application):
         url = backend.start_url
         if isinstance(backend, SSTBackend):
             auth = (backend.username, backend.password)
+        else:
+            auth = ()
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
         logger.debug('To get challenge data from {}, with {}', url, params)
