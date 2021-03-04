@@ -33,6 +33,7 @@ import logbook
 from logbook import Logger
 from PIL import Image
 from pydantic import BaseModel
+from kiss_headers import BasicAuthorization
 
 gi.require_version('GLib', '2.0')
 gi.require_version('Gtk', '3.0')
@@ -120,15 +121,12 @@ class TumTumApplication(Gtk.Application):
 
     def request_http(self, method: str, url: str, data: BaseModel, callback: Callable, basic_auth=()):
         session = Soup.Session.new()
-        uri = Soup.URI.new(url)
+        message = Soup.Message.new(method, url)
         if basic_auth:
             logger.debug('Set auth')
-            uri.set_user(basic_auth[0])
-            try:
-                uri.set_password(basic_auth[1])
-            except IndexError:
-                pass
-        message = Soup.Message.new_from_uri(method, uri)
+            auth = BasicAuthorization(*basic_auth)
+            headers = message.get_property('request-headers')
+            headers.append('Authorization', str(auth))
         body = data.json(by_alias=True).encode()
         message.set_request('application/json', Soup.MemoryUse.COPY, body)
         session.queue_message(message, callback)
