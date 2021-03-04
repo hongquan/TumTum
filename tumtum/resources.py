@@ -69,12 +69,14 @@ def get_config_path() -> Path:
 
 def load_config() -> AppSettings:
     filepath = get_config_path()
+    data = {}
     if filepath.exists():
         data = toml.loads(filepath.read_text())
         try:
             return AppSettings.parse_obj(data)
         except ValidationError:
-            data = {}
+            pass
     if not data:
         data = DEFAULT_SETTINGS
+    print(data)
     return AppSettings.parse_obj(data)

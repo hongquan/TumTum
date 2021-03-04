@@ -23,7 +23,6 @@ from base64 import b64encode
 from gettext import gettext as _
 from typing import Optional, Dict, Tuple, List, Deque, Callable
 from collections import deque
-from urllib.parse import urljoin
 from asyncio import AbstractEventLoop
 from concurrent.futures import ProcessPoolExecutor, Future
 
@@ -47,15 +46,16 @@ gi.require_foreign('cairo')
 
 from gi.repository import GLib, Gtk, Gdk, Gio, Gst, GstBase, GstApp, Soup
 
-from .consts import APP_ID, SHORT_NAME, BACKEND_BASE_URL, FPS, BACKENDS
+from .consts import APP_ID, SHORT_NAME, FPS
 from . import __version__
 from . import ui
 from .resources import get_ui_filepath, get_config_path, load_config
-from .prep import get_device_path
+from .prep import get_device_path, MyTomlEncoder
 from .states import ChallengeLifeCycle, State
 from .models import (
     OverlayDrawData, ChallengeStartRequest, ChallengeInfo,
-    FrameSubmitRequest, ChallengeVerifyRequest, AppSettings
+    FrameSubmitRequest, ChallengeVerifyRequest, AppSettings,
+    Backend, AWSBackend, SSTBackend
 )
 from .tasks import detect_face
 
@@ -273,20 +273,23 @@ class TumTumApplication(Gtk.Application):
         self.cont_webcam.add(area)
         area.show()
 
-    def get_active_backend(self) -> Dict[str, str]:
+    def get_active_backend(self) -> Backend:
         liter = self.backend_combobox.get_active_iter()
         name, codename = self.backend_store[liter]
-        return BACKENDS[codename]
+        settings = load_config()
+        if codename == 'aws_demo':
+            return AWSBackend(settings.aws_demo)
+        return SSTBackend(settings.sst)
 
     def get_challenge(self):
         logger.debug('Event loop: {}', self.loop)
         self.run_await(self.state_machine.start, self.infobar)
         backend = self.get_active_backend()
-        url_start = urljoin(backend['base_url'], 'start')
+        url = backend.start_url
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
-        logger.debug('To get challenge data from {}, with {}', url_start, params)
-        self.request_http('POST', url_start, params, self.cb_challenge_retrieved)
+        logger.debug('To get challenge data from {}, with {}', url, params)
+        self.request_http('POST', url, params, self.cb_challenge_retrieved)
 
     def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
         raw_body = msg.get_property('response-body-data').get_data()
@@ -482,7 +485,8 @@ class TumTumApplication(Gtk.Application):
             settings = AppSettings.parse_obj(settings_data)
             logger.debug('New settings: {}', settings)
             filepath = get_config_path()
-            filepath.write_text(toml.dumps(settings.dict()))
+            logger.debug('To save: {}', settings.dict())
+            filepath.write_text(toml.dumps(settings.dict(), encoder=MyTomlEncoder()))
         dlg_settings.destroy()
 
     def play_webcam_video(self, widget: Optional[Gtk.Widget] = None):
@@ -514,7 +518,8 @@ class TumTumApplication(Gtk.Application):
         floating_file = BytesIO()
         image.save(floating_file, 'JPEG')
         timestamp_ms = round(time.time() * 1000)
-        url = urljoin(BACKEND_BASE_URL, f'{self.challenge_info.id}/frames')
+        backend = self.get_active_backend()
+        url = backend.get_submit_frame_url(str(self.challenge_info.id))
         # Backend accepts timestamp to microsecond
         params = FrameSubmitRequest(
             frame_base64=b64encode(floating_file.getvalue()),
@@ -529,7 +534,8 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Response: {}', raw_body)
 
     def verify_challenge(self):
-        url = urljoin(BACKEND_BASE_URL, f'{self.challenge_info.id}/verify')
+        backend = self.get_active_backend()
+        url = backend.get_verify_url(str(self.challenge_info.id))
         data = ChallengeVerifyRequest(token=self.challenge_info.token)
         logger.debug('To post to {}', url)
         self.request_http('POST', url, data, self.cb_challenge_verification_done)

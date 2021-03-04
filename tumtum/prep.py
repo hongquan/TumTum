@@ -1,13 +1,20 @@
-import io
 from fractions import Fraction
 
 import gi
+from pydantic import AnyHttpUrl
+from toml.encoder import TomlEncoder
 
 gi.require_version('Gio', '2.0')
 gi.require_version('GdkPixbuf', '2.0')
 gi.require_version('Rsvg', '2.0')
 gi.require_version('Gst', '1.0')
-from gi.repository import GdkPixbuf, Rsvg, Gst
+from gi.repository import GdkPixbuf, Gst
+
+
+class MyTomlEncoder(TomlEncoder):
+    def __init__(self, _dict=dict, preserve=False):
+        super().__init__(_dict, preserve)
+        self.dump_funcs[AnyHttpUrl] = lambda x: str(x)
 
 
 def get_device_path(device: Gst.Device):
