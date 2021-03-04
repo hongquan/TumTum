@@ -27,7 +27,7 @@ from asyncio import AbstractEventLoop
 from concurrent.futures import ProcessPoolExecutor, Future
 
 import gi
-import toml
+import tomlkit
 import cairo
 import logbook
 from logbook import Logger
@@ -50,13 +50,13 @@ from .consts import APP_ID, SHORT_NAME, FPS
 from . import __version__
 from . import ui
 from .resources import get_ui_filepath, get_config_path, load_config
-from .prep import get_device_path, MyTomlEncoder
+from .prep import get_device_path
 from .states import ChallengeLifeCycle, State
 from .models import (
     OverlayDrawData, ChallengeStartRequest, ChallengeInfo,
     FrameSubmitRequest, ChallengeVerifyRequest, AppSettings,
-    Backend, AWSBackend, SSTBackend
 )
+from .backends import Backend, AWSBackend, SSTBackend
 from .tasks import detect_face
 
 
@@ -486,7 +486,7 @@ class TumTumApplication(Gtk.Application):
             logger.debug('New settings: {}', settings)
             filepath = get_config_path()
             logger.debug('To save: {}', settings.dict())
-            filepath.write_text(toml.dumps(settings.dict(), encoder=MyTomlEncoder()))
+            filepath.write_text(tomlkit.dumps(settings.dict()))
         dlg_settings.destroy()
 
     def play_webcam_video(self, widget: Optional[Gtk.Widget] = None):

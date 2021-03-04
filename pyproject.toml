@@ -17,10 +17,10 @@ kiss-headers = "^2.2.3"
 face-recognition = "^1.3.0"
 statesman = "^1.0.1"
 single-version = "^1.5.1"
-toml = "^0.10.2"
 pydantic = "^1.8"
 pydantic-initialized = "^0.4.0"
 yarl = "^1.6.3"
+tomlkit = "^0.7.0"
 
 [tool.poetry.dev-dependencies]
 pytest = "^5.2"

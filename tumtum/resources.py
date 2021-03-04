@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import gi
-import toml
+import tomlkit
 from pydantic import ValidationError
 
 gi.require_version('Gio', '2.0')
@@ -71,12 +71,11 @@ def load_config() -> AppSettings:
     filepath = get_config_path()
     data = {}
     if filepath.exists():
-        data = toml.loads(filepath.read_text())
+        data = tomlkit.parse(filepath.read_text())
         try:
             return AppSettings.parse_obj(data)
         except ValidationError:
             pass
     if not data:
         data = DEFAULT_SETTINGS
-    print(data)
     return AppSettings.parse_obj(data)
