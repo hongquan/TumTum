@@ -21,18 +21,18 @@ from io import BytesIO
 from threading import Event
 from base64 import b64encode
 from gettext import gettext as _
-from typing import Optional, Dict, Tuple, List, Deque, Callable
+from typing import Optional, Dict, Tuple, List, Deque, Callable, Any
 from collections import deque
 from asyncio import AbstractEventLoop
 from concurrent.futures import ProcessPoolExecutor, Future
 
 import gi
+import orjson
 import tomlkit
 import cairo
 import logbook
 from logbook import Logger
 from PIL import Image
-from pydantic import BaseModel
 from kiss_headers import BasicAuthorization
 
 gi.require_version('GLib', '2.0')
@@ -119,7 +119,8 @@ class TumTumApplication(Gtk.Application):
     def run_await(self, function, *args):
         return asyncio.run_coroutine_threadsafe(function(*args), self.loop)
 
-    def request_http(self, method: str, url: str, data: BaseModel, callback: Callable, basic_auth=()):
+    def request_http(self, method: str, url: str, data: Dict[str, Any], callback: Callable,
+                     backend: Backend, basic_auth=()):
         session = Soup.Session.new()
         message = Soup.Message.new(method, url)
         if basic_auth:
@@ -127,9 +128,9 @@ class TumTumApplication(Gtk.Application):
             auth = BasicAuthorization(*basic_auth)
             headers = message.get_property('request-headers')
             headers.append('Authorization', str(auth))
-        body = data.json(by_alias=True).encode()
+        body = orjson.dumps(data)
         message.set_request('application/json', Soup.MemoryUse.COPY, body)
-        session.queue_message(message, callback)
+        session.queue_message(message, callback, backend)
 
     def do_startup(self):
         Gtk.Application.do_startup(self)
@@ -293,16 +294,18 @@ class TumTumApplication(Gtk.Application):
         self.run_await(self.state_machine.start, self.infobar)
         backend = self.get_active_backend()
         url = backend.start_url
-        if isinstance(backend, SSTBackend):
-            auth = (backend.username, backend.password)
-        else:
-            auth = ()
         w, h = self.frame_size
         params = ChallengeStartRequest(image_width=w, image_height=h)
+        if isinstance(backend, SSTBackend):
+            auth = (backend.username, backend.password)
+            post_data = params.request_for_sst()
+        else:
+            auth = ()
+            post_data = params.request_for_aws()
         logger.debug('To get challenge data from {}, with {}', url, params)
-        self.request_http('POST', url, params, self.cb_challenge_retrieved, auth)
+        self.request_http('POST', url, post_data, self.cb_challenge_retrieved, backend, auth)
 
-    def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message):
+    def cb_challenge_retrieved(self, session: Soup.Session, msg: Soup.Message, backend: Backend):
         status = msg.get_property('status-code')
         raw_body = msg.get_property('response-body-data').get_data()
         if status < 200 or status >= 300:
@@ -311,7 +314,10 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Response: {}', raw_body)
         if not raw_body:
             return
-        self.challenge_info = ChallengeInfo.parse_raw(raw_body)
+        body = orjson.loads(raw_body)
+        if isinstance(backend, SSTBackend):
+            body['user_id'] = body.pop('external_person_id')
+        self.challenge_info = ChallengeInfo.parse_obj(body)
         logger.debug('Challenge info: {}', self.challenge_info)
         logger.debug('State: {}', self.state_machine.state)
         self.run_await(self.state_machine.center_face)
@@ -550,22 +556,35 @@ class TumTumApplication(Gtk.Application):
             timestamp=timestamp_ms,
             token=self.challenge_info.token
         )
-        logger.debug('Submit frame')
-        self.request_http('PUT', url, params, self.cb_frame_submission_done)
+        if isinstance(backend, SSTBackend):
+            auth = (backend.username, backend.password)
+            post_data = params.request_for_sst()
+        else:
+            auth = ()
+            post_data = params.request_for_aws()
+        logger.debug('Submit frame with fields: {}', post_data.keys())
+        self.request_http('PUT', url, post_data, self.cb_frame_submission_done, backend, auth)
 
-    def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message):
+    def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message, backend: Backend):
         raw_body = msg.get_property('response-body-data').get_data()
-        logger.debug('Response: {}', raw_body)
+        logger.debug('Frame submission response: {}', raw_body)
 
     def verify_challenge(self):
         backend = self.get_active_backend()
         url = backend.get_verify_url(str(self.challenge_info.id))
-        data = ChallengeVerifyRequest(token=self.challenge_info.token)
+        params = ChallengeVerifyRequest(token=self.challenge_info.token)
         logger.debug('To post to {}', url)
-        self.request_http('POST', url, data, self.cb_challenge_verification_done)
+        if isinstance(backend, SSTBackend):
+            auth = (backend.username, backend.password)
+            post_data = params.request_for_sst()
+        else:
+            auth = ()
+            post_data = params.request_for_aws()
+        self.request_http('POST', url, post_data,
+                          self.cb_challenge_verification_done, backend, auth)
         self.btn_pause.set_active(True)
 
-    def cb_challenge_verification_done(self, session: Soup.Session, msg: Soup.Message):
+    def cb_challenge_verification_done(self, session: Soup.Session, msg: Soup.Message, backend: Backend):
         raw_body = msg.get_property('response-body-data').get_data()
         logger.debug('Challenge verify response: {}', raw_body)
         self.run_await(self.state_machine.stop)

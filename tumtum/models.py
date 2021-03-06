@@ -1,6 +1,6 @@
 from uuid import uuid4, UUID
 from dataclasses import field
-from typing import Optional, NamedTuple, List, Tuple
+from typing import Optional, NamedTuple, List, Tuple, Dict, Any
 
 from pydantic import BaseModel, Field, AnyHttpUrl
 from pydantic.dataclasses import dataclass
@@ -26,7 +26,16 @@ def to_camel(string: str) -> str:
     return ''.join(parts)
 
 
-class ChallengeStartRequest(BaseModel):
+class APIRequestMixin:
+
+    def request_for_sst(self) -> Dict[str, Any]:
+        return self.dict()
+
+    def request_for_aws(self) -> Dict[str, Any]:
+        return self.dict(by_alias=True)
+
+
+class ChallengeStartRequest(APIRequestMixin, BaseModel):
     user_id: UUID = Field(default_factory=uuid4)
     image_width: int
     image_height: int
@@ -35,9 +44,15 @@ class ChallengeStartRequest(BaseModel):
         alias_generator = to_camel
         allow_population_by_field_name = True
 
+    def request_for_sst(self) -> Dict[str, Any]:
+        data = self.dict()
+        data['external_person_id'] = data.pop('user_id')
+        return data
+
 
 class ChallengeInfo(BaseModel):
     id: UUID
+    # SST API returns external_person_id instead of user_id
     user_id: UUID
     image_width: int
     image_height: int
@@ -50,25 +65,30 @@ class ChallengeInfo(BaseModel):
     nose_top: int
     nose_width: int
     nose_height: int
-    token: str
+    token: Optional[str] = None
 
     class Config:
         alias_generator = to_camel
         allow_population_by_field_name = True
 
 
-class FrameSubmitRequest(BaseModel):
+class FrameSubmitRequest(APIRequestMixin, BaseModel):
     frame_base64: str
     timestamp: int
-    token: str
+    token: Optional[str] = None
 
     class Config:
         alias_generator = to_camel
         allow_population_by_field_name = True
 
+    def request_for_sst(self) -> Dict[str, Any]:
+        data = self.dict()
+        data['photo'] = data.pop('frame_base64')
+        return data
 
-class ChallengeVerifyRequest(BaseModel):
-    token: str
+
+class ChallengeVerifyRequest(APIRequestMixin, BaseModel):
+    token: Optional[str] = None
 
 
 class SSTSetting(BaseModel):
