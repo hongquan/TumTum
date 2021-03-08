@@ -116,7 +116,7 @@ class TumTumApplication(Gtk.Application):
         self.loop = asyncio.get_event_loop()
 
     # Util to run an async function in our dedicated thread for asyncio event loop.
-    def run_await(self, function, *args):
+    def run_await(self, function, *args) -> Future:
         return asyncio.run_coroutine_threadsafe(function(*args), self.loop)
 
     def request_http(self, method: str, url: str, data: Dict[str, Any], callback: Callable,
@@ -151,10 +151,10 @@ class TumTumApplication(Gtk.Application):
         action_about.connect('activate', self.show_about_dialog)
         self.add_action(action_about)
 
-    def build_gstreamer_pipeline(self):
+    def build_gstreamer_pipeline(self, src_type: str = 'v4l2src'):
         # https://gstreamer.freedesktop.org/documentation/application-development/advanced/pipeline-manipulation.html?gi-language=c#grabbing-data-with-appsink
         # Try GL backend first
-        command = (f'v4l2src name={self.GST_SOURCE_NAME} ! tee name=t ! '
+        command = (f'{src_type} name={self.GST_SOURCE_NAME} ! tee name=t ! '
                    f'queue ! videoconvert ! cairooverlay name={self.GST_OVERLAY_NAME} ! '
                    f'glsinkbin sink="gtkglsink name={self.SINK_NAME}" name=sink_bin '
                    't. ! queue leaky=2 ! videoconvert ! '
@@ -169,7 +169,7 @@ class TumTumApplication(Gtk.Application):
         if not pipeline:
             logger.info('OpenGL is not available, fallback to normal GtkSink')
             # Fallback to non-GL
-            command = (f'v4l2src name={self.GST_SOURCE_NAME} ! videoconvert ! tee name=t ! '
+            command = (f'{src_type} name={self.GST_SOURCE_NAME} ! videoconvert ! tee name=t ! '
                        f'queue ! cairooverlay name={self.GST_OVERLAY_NAME} ! gtksink name={self.SINK_NAME} '
                        't. ! queue leaky=1 max-size-buffers=2 ! '
                        f'videorate ! video/x-raw,format=RGB,framerate={FPS}/1 ! '
@@ -242,8 +242,11 @@ class TumTumApplication(Gtk.Application):
             # Device is of private type GstV4l2Device or GstPipeWireDevice
             logger.debug('Found device {}', d.get_path_string())
             cam_name = d.get_display_name()
-            cam_path = get_device_path(d)
-            self.webcam_store.append((cam_path, cam_name))
+            cam_path, src_type = get_device_path(d)
+            self.webcam_store.append((cam_path, cam_name, src_type))
+        # If no webcam is selected, select the first one
+        if not self.webcam_combobox.get_active_iter():
+            self.webcam_combobox.set_active(0)
         logger.debug('Start device monitoring')
         self.devmonitor.start()
 
@@ -254,9 +257,8 @@ class TumTumApplication(Gtk.Application):
             self.discover_webcam()
         self.window.present()
         logger.debug("Window {} is shown", self.window)
-        # If no webcam is selected, select the first one
-        if not self.webcam_combobox.get_active_iter():
-            self.webcam_combobox.set_active(0)
+        if not self.backend_combobox.get_active_iter():
+            self.backend_combobox.set_active(0)
 
     def do_command_line(self, command_line: Gio.ApplicationCommandLine):
         options = command_line.get_options_dict().end().unpack()
@@ -278,6 +280,16 @@ class TumTumApplication(Gtk.Application):
         old_area = self.cont_webcam.get_child()
         logger.debug('To replace {} with {}', old_area, area)
         self.cont_webcam.remove(old_area)
+        self.cont_webcam.add(area)
+        area.show()
+
+    def detach_gstreamer_sink_from_window(self):
+        old_area = self.cont_webcam.get_child()
+        self.cont_webcam.remove(old_area)
+
+    def attach_gstreamer_sink_to_window(self):
+        sink = self.gst_pipeline.get_by_name(self.SINK_NAME)
+        area = sink.get_property('widget')
         self.cont_webcam.add(area)
         area.show()
 
@@ -330,21 +342,21 @@ class TumTumApplication(Gtk.Application):
             if not added_dev:
                 return True
             logger.debug('Added: {}', added_dev)
-            cam_path = get_device_path(added_dev)
+            cam_path, src_type = get_device_path(added_dev)
             cam_name = added_dev.get_display_name()
             # Check if this cam already in the list, add to list if not.
             for row in self.webcam_store:
                 if row[0] == cam_path:
                     break
             else:
-                self.webcam_store.append((cam_path, cam_name))
+                self.webcam_store.append((cam_path, cam_name, src_type))
             return True
         elif message.type == Gst.MessageType.DEVICE_REMOVED:
             removed_dev: Optional[Gst.Device] = message.parse_device_removed()
             if not removed_dev:
                 return True
             logger.debug('Removed: {}', removed_dev)
-            cam_path = get_device_path(removed_dev)
+            cam_path, src_type = get_device_path(removed_dev)
             ppl_source = self.gst_pipeline.get_by_name(self.GST_SOURCE_NAME)
             if cam_path == ppl_source.get_property('device'):
                 self.gst_pipeline.set_state(Gst.State.NULL)
@@ -366,25 +378,36 @@ class TumTumApplication(Gtk.Application):
         liter = combo.get_active_iter()
         if not liter:
             return
-        model = combo.get_model()
-        path, name = model[liter]
-        logger.debug('Picked {} {}', path, name)
-        ppl_source = self.gst_pipeline.get_by_name(self.GST_SOURCE_NAME)
-        self.gst_pipeline.set_state(Gst.State.NULL)
         self.run_await(self.state_machine.stop)
-        ppl_source.set_property('device', path)
-        self.gst_pipeline.set_state(Gst.State.PLAYING)
+        model = combo.get_model()
+        path, name, source_type = model[liter]
+        logger.debug('Picked {} {} ({})', path, name, source_type)
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
-        app_sink.set_emit_signals(True)
+        app_sink.set_emit_signals(False)
+        self.detach_gstreamer_sink_from_window()
+        self.gst_pipeline.remove(app_sink)
+        ppl_source = self.gst_pipeline.get_by_name(self.GST_SOURCE_NAME)
+        ppl_source.set_state(Gst.State.NULL)
+        self.gst_pipeline.remove(ppl_source)
+        Gtk.main_iteration()
+        self.build_gstreamer_pipeline(source_type)
+        self.attach_gstreamer_sink_to_window()
+        ppl_source = self.gst_pipeline.get_by_name(self.GST_SOURCE_NAME)
+        if source_type == 'pipewiresrc':
+            logger.debug('Change pipewiresrc path to {}', path)
+            ppl_source.set_property('path', path)
+        else:
+            logger.debug('Change v4l2src device to {}', path)
+            ppl_source.set_property('device', path)
+        self.gst_pipeline.set_state(Gst.State.NULL)
+        GLib.timeout_add_seconds(3, self.start_pipeline_and_challenge)
 
     def on_backend_combobox_changed(self, combo: Gtk.ComboBox):
-        self.gst_pipeline.set_state(Gst.State.NULL)
-        self.run_await(self.state_machine.stop)
-        self.gst_pipeline.set_state(Gst.State.PLAYING)
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
-        app_sink.set_emit_signals(True)
-        self.run_await(self.state_machine.start)
-        self.get_challenge()
+        app_sink.set_emit_signals(False)
+        self.gst_pipeline.set_state(Gst.State.NULL)
+        future = self.run_await(self.state_machine.stop)
+        future.add_done_callback(self.start_pipeline_and_challenge)
 
     def on_overlay_caps_changed(self, _overlay: GstBase.BaseTransform, caps: Gst.Caps):
         struct: Gst.Structure = caps[0]
@@ -530,6 +553,7 @@ class TumTumApplication(Gtk.Application):
             logger.debug('Stop appsink from emitting signals')
             app_sink.set_emit_signals(False)
             r = source.set_state(Gst.State.READY)
+            Gtk.main_iteration()
             r = source.set_state(Gst.State.PAUSED)
             logger.debug('Change {} state to paused: {}', source.get_name(), r)
         else:
@@ -537,6 +561,15 @@ class TumTumApplication(Gtk.Application):
             logger.debug('Change {} state to playing: {}', source.get_name(), r)
             # Delay set_emit_signals call to prevent scanning old frame
             GLib.timeout_add_seconds(1, app_sink.set_emit_signals, True)
+
+    def start_pipeline_and_challenge(self, future: Optional[Future] = None):
+        self.gst_pipeline.set_state(Gst.State.PLAYING)
+        app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
+        app_sink.set_emit_signals(True)
+        self.run_await(self.state_machine.start)
+        self.get_challenge()
+        # This function may be passed to GLib.timeout_add_seconds, so it needs to return False to avoid repetition
+        return False
 
     def pass_face_detection_result(self, future: Future):
         result = future.result()

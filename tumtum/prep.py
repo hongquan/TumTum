@@ -15,9 +15,12 @@ def get_device_path(device: Gst.Device):
     # so we have to access its "device.path" in general GStreamer way
     if type_name == 'GstPipeWireDevice':
         properties = device.get_properties()
-        return properties['device.path']
+        path = properties['device.path']
+        if not path:
+            path = properties['api.v4l2.path']
+        return path, 'pipewiresrc'
     # Assume GstV4l2Device
-    return device.get_property('device_path')
+    return device.get_property('device_path'), 'v4l2src'
 
 
 def scale_pixbuf(pixbuf: GdkPixbuf.Pixbuf, outer_width: int, outer_height):
