@@ -39,23 +39,23 @@ msgstr "Verbonden"
 msgid "Saved"
 msgstr "Opgeslagen"
 
-#: data/main.glade:35
+#: data/tumtum.glade:35
 msgid "Play"
 msgstr "Afspelen"
 
-#: data/main.glade:51
+#: data/tumtum.glade:51
 msgid "Pause"
 msgstr "Pauzeren"
 
-#: data/main.glade:103
+#: data/tumtum.glade:103
 msgid "TumTum"
 msgstr "TumTum"
 
-#: data/main.glade:233
+#: data/tumtum.glade:233
 msgid "Webcam"
 msgstr "Webcam"
 
-#: data/main.glade:297
+#: data/tumtum.glade:297
 msgid ""
 "Please add an image file by one of these methods:\n"
 "\n"
@@ -71,19 +71,19 @@ msgstr ""
 "-Kies via onderstaande knop (werkt niet in Flatpak-uitgaven).\n"
 "Externe afbeeldingen (http://..., sftp://...) zijn toegestaan."
 
-#: data/main.glade:320
+#: data/tumtum.glade:320
 msgid "Image"
 msgstr "Afbeelding"
 
-#: data/main.glade:369
+#: data/tumtum.glade:369
 msgid "Please choose an image file"
 msgstr "Kies een afbeeldingsbestand"
 
-#: data/main.glade:413
+#: data/tumtum.glade:413
 msgid "Result"
 msgstr "Resultaat"
 
-#: data/main.glade:445
+#: data/tumtum.glade:445
 msgid "Raw result"
 msgstr "Resultaat (platte tekst)"
 

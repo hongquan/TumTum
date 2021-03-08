@@ -39,23 +39,23 @@ msgstr "Connesso"
 msgid "Saved"
 msgstr "Salvato"
 
-#: data/main.glade:35
+#: data/tumtum.glade:35
 msgid "Play"
 msgstr "Avvia"
 
-#: data/main.glade:51
+#: data/tumtum.glade:51
 msgid "Pause"
 msgstr "Pausa"
 
-#: data/main.glade:103
+#: data/tumtum.glade:103
 msgid "TumTum"
 msgstr "TumTum"
 
-#: data/main.glade:233
+#: data/tumtum.glade:233
 msgid "Webcam"
 msgstr "Webcam"
 
-#: data/main.glade:297
+#: data/tumtum.glade:297
 msgid ""
 "Please add an image file by one of these methods:\n"
 "\n"
@@ -73,19 +73,19 @@ msgstr ""
 "\n"
 "L'immagine remota (da http:// ..., sftp://...) è consentita."
 
-#: data/main.glade:320
+#: data/tumtum.glade:320
 msgid "Image"
 msgstr "Immagine"
 
-#: data/main.glade:369
+#: data/tumtum.glade:369
 msgid "Please choose an image file"
 msgstr "Scegli un file immagine"
 
-#: data/main.glade:413
+#: data/tumtum.glade:413
 msgid "Result"
 msgstr "Risultato"
 
-#: data/main.glade:445
+#: data/tumtum.glade:445
 msgid "Raw result"
 msgstr "Risultato grezzo"
 

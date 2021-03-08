@@ -10,6 +10,6 @@ tumtum/prep.py
 tumtum/resources.py
 tumtum/ui.py
 data/about.glade
-data/main.glade
+data/tumtum.glade
 data/url-display.glade
 data/wifi-display.glade

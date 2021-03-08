@@ -194,7 +194,7 @@ class TumTumApplication(Gtk.Application):
         return pipeline
 
     def build_main_window(self):
-        source = get_ui_filepath('main.glade')
+        source = get_ui_filepath('tumtum.glade')
         builder: Gtk.Builder = Gtk.Builder.new_from_file(str(source))
         handlers = self.signal_handlers_for_glade()
         window: Gtk.Window = builder.get_object('main-window')

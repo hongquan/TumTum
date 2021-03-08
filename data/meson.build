@@ -1,6 +1,6 @@
 
 
-install_data(['main.glade', 'about.glade', 'url-display.glade', 'wifi-display.glade',
+install_data(['tumtum.glade', 'about.glade', 'url-display.glade', 'wifi-display.glade',
               'tumtum_128.png', 'wireframe-image-add.svg'],
   install_dir: get_option('datadir') / meson.project_name()
 )
