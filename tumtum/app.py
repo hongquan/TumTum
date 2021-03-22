@@ -422,7 +422,7 @@ class TumTumApplication(Gtk.Application):
             return
         w = self.challenge_info.area_width
         h = self.challenge_info.area_height
-        x = self.challenge_info.area_top
+        x = self.challenge_info.area_left
         y = self.challenge_info.area_top
         logger.debug('To draw area where face is expected: {}', (x, y, w, h))
         context.rectangle(x, y, w, h)
