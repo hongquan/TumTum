@@ -552,8 +552,9 @@ class TumTumApplication(Gtk.Application):
             # Tell appsink to stop emitting signals
             logger.debug('Stop appsink from emitting signals')
             app_sink.set_emit_signals(False)
-            r = source.set_state(Gst.State.READY)
-            Gtk.main_iteration()
+            # FIXME: Change source state to Paused when the pipeline
+            # has not finished setting up other elements will cause
+            # pipeline being broken
             r = source.set_state(Gst.State.PAUSED)
             logger.debug('Change {} state to paused: {}', source.get_name(), r)
         else:
