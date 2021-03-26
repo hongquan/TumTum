@@ -17,6 +17,7 @@ import os
 import time
 import asyncio
 import threading
+import concurrent.futures
 from io import BytesIO
 from threading import Event
 from base64 import b64encode
@@ -104,6 +105,9 @@ class TumTumApplication(Gtk.Application):
     state_machine = ChallengeLifeCycle()
     executor = ProcessPoolExecutor()
     loop: AbstractEventLoop
+    # Save the face detectiont task (which will run in multiprocessing basis)
+    # so that we can cancel them when quitting the app.
+    detection_tasks: Dict[Future, str] = {}
 
     def __init__(self, *args, **kwargs):
         super().__init__(
@@ -498,6 +502,7 @@ class TumTumApplication(Gtk.Application):
         try:
             future = self.executor.submit(detect_face, img)
             future.add_done_callback(self.pass_face_detection_result)
+            self.detection_tasks[future] = ''
         except RuntimeError:
             logger.warning('Executor is already shutdown')
         return Gst.FlowReturn.OK
@@ -573,6 +578,7 @@ class TumTumApplication(Gtk.Application):
         return False
 
     def pass_face_detection_result(self, future: Future):
+        self.detection_tasks.pop(future, None)
         result = future.result()
         logger.debug('Image processing: {}', result)
         if result:
@@ -654,6 +660,12 @@ class TumTumApplication(Gtk.Application):
     def quit(self):
         if self.gst_pipeline:
             self.gst_pipeline.set_state(Gst.State.NULL)
+        # Cancel all pending face detection tasks
+        for future in self.detection_tasks:
+            future.cancel()
+        for i in range(3):
+            concurrent.futures.wait(self.detection_tasks.keys(), timeout=1)
+            Gtk.main_iteration()
         self.executor.shutdown(True)
         self.loop.stop()
         super().quit()
