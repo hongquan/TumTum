@@ -447,7 +447,7 @@ class TumTumApplication(Gtk.Application):
         if self.state_machine.state in (State.positioning_nose, State.verifying):
             w = self.challenge_info.nose_width
             h = self.challenge_info.nose_height
-            x = self.challenge_info.nose_top
+            x = self.challenge_info.nose_left
             y = self.challenge_info.nose_top
             logger.debug('To draw area where nose is expected: {}', (x, y, w, h))
             context.rectangle(x, y, w, h)
