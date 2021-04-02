@@ -13,6 +13,8 @@ class ChallengeLifeCycle(statesman.StateMachine):
         centering_face = 'Center face'
         positioning_nose = 'Move nose'
         verifying = 'Verifying'
+        success = 'Success'
+        failed = 'Failed'
         stopped = 'Stopped'
     infobar: Optional[Gtk.InfoBar] = None
 
@@ -33,11 +35,19 @@ class ChallengeLifeCycle(statesman.StateMachine):
 
     @statesman.event(source=States.positioning_nose, target=States.verifying)
     async def verify(self):
-        pass
+        self.show_guide('Verifying...')
+
+    @statesman.event(source=States.verifying, target=States.success)
+    async def finish_success(self):
+        self.show_guide('Success')
+
+    @statesman.event(source=States.verifying, target=States.failed)
+    async def finish_failed(self, err_message=''):
+        self.show_guide(err_message or 'Verification failed')
 
     @statesman.event(source=States.verifying, target=States.stopped)
     async def stop(self):
-        pass
+        self.show_guide('Stopped')
 
     def show_guide(self, message: str):
         if not self.infobar:
@@ -45,7 +55,8 @@ class ChallengeLifeCycle(statesman.StateMachine):
         box: Gtk.Box = self.infobar.get_content_area()
         label: Gtk.Label = box.get_children()[0]
         label.set_label(message)
-        self.infobar.set_message_type(Gtk.MessageType.INFO)
+        # This function is called in child thread and changing
+        # anything other than label will cause deadlock in UI thread.
 
 
 State = ChallengeLifeCycle.States

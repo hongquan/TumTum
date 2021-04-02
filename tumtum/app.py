@@ -15,6 +15,7 @@
 
 import os
 import time
+import json
 import asyncio
 import threading
 import concurrent.futures
@@ -443,7 +444,7 @@ class TumTumApplication(Gtk.Application):
         context.set_source_rgba(*color)
         context.set_line_width(4)
         context.stroke()
-        if self.state_machine.state in (State.starting, State.stopped):
+        if self.state_machine.state in (State.starting, State.stopped, State.success, State.failed):
             return
         if self.state_machine.state == State.centering_face and face_inside:
             self.run_await(self.state_machine.position_nose)
@@ -629,7 +630,16 @@ class TumTumApplication(Gtk.Application):
     def cb_challenge_verification_done(self, session: Soup.Session, msg: Soup.Message, backend: Backend):
         raw_body = msg.get_property('response-body-data').get_data()
         logger.debug('Challenge verify response: {}', raw_body)
-        self.run_await(self.state_machine.stop)
+        err_message = ''
+        try:
+            rsp = json.loads(raw_body)
+            if rsp.get('success'):
+                self.run_await(self.state_machine.finish_success)
+                return
+            err_message = rsp.get('message')
+        except ValueError:
+            pass
+        self.run_await(self.state_machine.finish_failed, err_message)
 
     def show_about_dialog(self, action: Gio.SimpleAction, param: Optional[GLib.Variant] = None):
         if self.gst_pipeline:
