@@ -1,7 +1,7 @@
 APP_ID = 'vn.hoabinh.quan.TumTum'
 BRAND_NAME = APP_ID.split('.')[-1]
 SHORT_NAME = BRAND_NAME.lower()
-FPS = 6
+FPS = 4
 BACKENDS = {
     'aws_demo': {
         'base_url': 'https://69hes0gg2k.execute-api.ap-southeast-1.amazonaws.com/Prod/challenge/',
