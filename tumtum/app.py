@@ -599,11 +599,13 @@ class TumTumApplication(Gtk.Application):
         if isinstance(backend, SSTBackend):
             auth = (backend.username, backend.password)
             post_data = params.request_for_sst()
+            method = 'POST'
         else:
             auth = ()
             post_data = params.request_for_aws()
+            method = 'PUT'
         logger.debug('Submit frame with fields: {}', post_data.keys())
-        self.request_http('PUT', url, post_data, self.cb_frame_submission_done, backend, auth)
+        self.request_http(method, url, post_data, self.cb_frame_submission_done, backend, auth)
 
     def cb_frame_submission_done(self, session: Soup.Session, msg: Soup.Message, backend: Backend):
         raw_body = msg.get_property('response-body-data').get_data()
