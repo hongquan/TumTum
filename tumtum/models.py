@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import uuid4, UUID
 from dataclasses import field
 from typing import Optional, NamedTuple, List, Tuple, Dict, Any
@@ -33,6 +34,10 @@ class APIRequestMixin:
 
     def request_for_aws(self) -> Dict[str, Any]:
         return self.dict(by_alias=True)
+
+
+def timestamp_ms_now():
+    return round(datetime.utcnow().timestamp() * 1000)
 
 
 class ChallengeStartRequest(APIRequestMixin, BaseModel):
@@ -74,7 +79,7 @@ class ChallengeInfo(BaseModel):
 
 class FrameSubmitRequest(APIRequestMixin, BaseModel):
     frame_base64: str
-    timestamp: int
+    timestamp: int = Field(default_factory=timestamp_ms_now)
     token: Optional[str] = None
 
     class Config:
@@ -83,7 +88,9 @@ class FrameSubmitRequest(APIRequestMixin, BaseModel):
 
     def request_for_sst(self) -> Dict[str, Any]:
         data = self.dict()
-        data['photo'] = data.pop('frame_base64')
+        data['content'] = data.pop('frame_base64')
+        del data['timestamp']
+        del data['token']
         return data
 
 

@@ -14,7 +14,6 @@
 
 
 import os
-import time
 import json
 import asyncio
 import threading
@@ -588,13 +587,11 @@ class TumTumApplication(Gtk.Application):
     def submit_frame(self, image: Image.Image):
         floating_file = BytesIO()
         image.save(floating_file, 'JPEG')
-        timestamp_ms = round(time.time() * 1000)
         backend = self.get_active_backend()
         url = backend.get_submit_frame_url(str(self.challenge_info.id))
         # Backend accepts timestamp to microsecond
         params = FrameSubmitRequest(
             frame_base64=b64encode(floating_file.getvalue()),
-            timestamp=timestamp_ms,
             token=self.challenge_info.token
         )
         if isinstance(backend, SSTBackend):
