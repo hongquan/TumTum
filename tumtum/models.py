@@ -96,6 +96,7 @@ class FrameSubmitRequest(APIRequestMixin, BaseModel):
 
 class ChallengeVerifyRequest(APIRequestMixin, BaseModel):
     token: Optional[str] = None
+    debug: bool = False
 
 
 class SSTSetting(BaseModel):

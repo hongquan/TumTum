@@ -612,7 +612,7 @@ class TumTumApplication(Gtk.Application):
     def verify_challenge(self):
         backend = self.get_active_backend()
         url = backend.get_verify_url(str(self.challenge_info.id))
-        params = ChallengeVerifyRequest(token=self.challenge_info.token)
+        params = ChallengeVerifyRequest(token=self.challenge_info.token, debug=True)
         logger.debug('To post to {}', url)
         if isinstance(backend, SSTBackend):
             auth = (backend.username, backend.password)
