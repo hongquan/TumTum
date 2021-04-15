@@ -582,7 +582,6 @@ class TumTumApplication(Gtk.Application):
         self.gst_pipeline.set_state(Gst.State.PLAYING)
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
         app_sink.set_emit_signals(True)
-        self.run_await(self.state_machine.start, self.pigeon)
         self.get_challenge()
         # This function may be passed to GLib.timeout_add_seconds, so it needs to return False to avoid repetition
         return False
