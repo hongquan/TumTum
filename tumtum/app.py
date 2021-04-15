@@ -53,7 +53,7 @@ from . import __version__
 from . import ui
 from .resources import get_ui_filepath, get_config_path, load_config
 from .prep import get_device_path
-from .states import ChallengeLifeCycle, State
+from .states import ChallengeLifeCycle, State, Pigeon
 from .models import (
     OverlayDrawData, ChallengeStartRequest, ChallengeInfo,
     FrameSubmitRequest, ChallengeVerifyRequest, AppSettings,
@@ -97,6 +97,7 @@ class TumTumApplication(Gtk.Application):
     clipboard: Optional[Gtk.Clipboard] = None
     progress_bar: Optional[Gtk.ProgressBar] = None
     infobar: Optional[Gtk.InfoBar] = None
+    pigeon: Optional[Pigeon] = None
     g_event_sources: Dict[str, int] = {}
     frame_size: Optional[Tuple[int, int]] = None
     overlay_queue: 'Deque[OverlayDrawData]' = deque(maxlen=1)
@@ -222,8 +223,10 @@ class TumTumApplication(Gtk.Application):
         self.infobar = builder.get_object('info-bar')
         box_playpause = builder.get_object('evbox-playpause')
         self.cont_webcam.add_overlay(box_playpause)
+        self.pigeon = Pigeon()
         logger.debug('Connect signal handlers')
         builder.connect_signals(handlers)
+        self.pigeon.connect('user-message', self.on_state_message)
         return window
 
     def signal_handlers_for_glade(self):
@@ -307,7 +310,7 @@ class TumTumApplication(Gtk.Application):
 
     def get_challenge(self):
         logger.debug('Event loop: {}', self.loop)
-        self.run_await(self.state_machine.start, self.infobar)
+        self.run_await(self.state_machine.start, self.pigeon)
         backend = self.get_active_backend()
         url = backend.start_url
         w, h = self.frame_size
@@ -518,6 +521,13 @@ class TumTumApplication(Gtk.Application):
     def on_info_bar_response(self, infobar: Gtk.InfoBar, response_id: int):
         infobar.set_visible(False)
 
+    def on_state_message(self, instance: Pigeon, message: str, mtype: Gtk.MessageType):
+        box: Gtk.Box = self.infobar.get_content_area()
+        label: Gtk.Label = box.get_children()[0]
+        label.set_label(message)
+        self.infobar.set_message_type(mtype)
+        self.infobar.set_visible(True)
+
     def on_btn_pref_clicked(self, button: Gtk.Button):
         source = get_ui_filepath('settings.glade')
         builder: Gtk.Builder = Gtk.Builder.new_from_file(str(source))
@@ -572,7 +582,7 @@ class TumTumApplication(Gtk.Application):
         self.gst_pipeline.set_state(Gst.State.PLAYING)
         app_sink = self.gst_pipeline.get_by_name(self.APPSINK_NAME)
         app_sink.set_emit_signals(True)
-        self.run_await(self.state_machine.start)
+        self.run_await(self.state_machine.start, self.pigeon)
         self.get_challenge()
         # This function may be passed to GLib.timeout_add_seconds, so it needs to return False to avoid repetition
         return False

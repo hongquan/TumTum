@@ -4,7 +4,15 @@ import gi
 gi.require_version('Gtk', '3.0')
 
 import statesman
-from gi.repository import Gtk
+from gi.repository import GObject, Gtk
+
+
+class Pigeon(GObject.Object):
+    @GObject.Signal('user-message', flags=GObject.SignalFlags.RUN_LAST, return_type=bool,
+                    arg_types=(str, Gtk.MessageType),
+                    accumulator=GObject.signal_accumulator_true_handled)
+    def user_message(self, message: str, mtype: Gtk.MessageType.INFO):
+        pass
 
 
 class ChallengeLifeCycle(statesman.StateMachine):
@@ -16,14 +24,15 @@ class ChallengeLifeCycle(statesman.StateMachine):
         success = 'Success'
         failed = 'Failed'
         stopped = 'Stopped'
-    infobar: Optional[Gtk.InfoBar] = None
+
+    pigeon: Optional[Pigeon] = None
 
     class Config:
         arbitrary_types_allowed = True
 
     @statesman.event(None, States.starting)
-    async def start(self, infobar: Gtk.InfoBar):
-        self.infobar = infobar
+    async def start(self, pigeon: Pigeon):
+        self.pigeon = pigeon
 
     @statesman.event(source=States.starting, target=States.centering_face)
     async def center_face(self):
@@ -43,20 +52,17 @@ class ChallengeLifeCycle(statesman.StateMachine):
 
     @statesman.event(source=States.verifying, target=States.failed)
     async def finish_failed(self, err_message=''):
-        self.show_guide(err_message or 'Verification failed')
+        self.show_error(err_message or 'Verification failed')
 
     @statesman.event(source=States.verifying, target=States.stopped)
     async def stop(self):
         self.show_guide('Stopped')
 
     def show_guide(self, message: str):
-        if not self.infobar:
-            return
-        box: Gtk.Box = self.infobar.get_content_area()
-        label: Gtk.Label = box.get_children()[0]
-        label.set_label(message)
-        # This function is called in child thread and changing
-        # anything other than label will cause deadlock in UI thread.
+        self.pigeon.emit('user-message', message, Gtk.MessageType.INFO)
+
+    def show_error(self, message: str):
+        self.pigeon.emit('user-message', message, Gtk.MessageType.ERROR)
 
 
 State = ChallengeLifeCycle.States
