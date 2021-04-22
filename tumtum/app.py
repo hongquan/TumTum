@@ -619,6 +619,7 @@ class TumTumApplication(Gtk.Application):
         logger.debug('Frame submission response: {}', raw_body)
 
     def verify_challenge(self):
+        self.btn_pause.set_active(True)
         backend = self.get_active_backend()
         url = backend.get_verify_url(str(self.challenge_info.id))
         params = ChallengeVerifyRequest(token=self.challenge_info.token, debug=True)
@@ -631,11 +632,11 @@ class TumTumApplication(Gtk.Application):
             post_data = params.request_for_aws()
         self.request_http('POST', url, post_data,
                           self.cb_challenge_verification_done, backend, auth)
-        self.btn_pause.set_active(True)
 
     def cb_challenge_verification_done(self, session: Soup.Session, msg: Soup.Message, backend: Backend):
+        logger.debug('Challenge verify response: {}', msg)
         raw_body = msg.get_property('response-body-data').get_data()
-        logger.debug('Challenge verify response: {}', raw_body)
+        logger.debug('Challenge verify response content: {}', raw_body)
         err_message = ''
         try:
             rsp = json.loads(raw_body)
